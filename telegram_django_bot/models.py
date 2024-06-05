@@ -25,7 +25,7 @@ class TelegramDjangoJsonDecoder(json.JSONDecoder):
 		for key in sub_dict.keys():
 			value = sub_dict[key]
 			dt_object = None
-			if type(value) == str:
+			if isinstance(value, str):
 				try:
 					dt_object = datetime.time.fromisoformat(value)
 				except ValueError:
@@ -75,7 +75,7 @@ class MESSAGE_FORMAT:
 
 class ModelwithTimeManager(models.Manager):
 	def bot_filter_active(self, *args, **kwargs):
-		return self.filter(dttm_deleted__isnull=True, *args, **kwargs)
+		return self.filter(*args, dttm_deleted__isnull=True, **kwargs)
 
 
 class AbstractActiveModel(models.Model):
@@ -232,9 +232,7 @@ class TeleDeepLink(models.Model):
 
 
 class ActionLog(models.Model):
-	"""
-	User actions logs
-	"""
+	"""User actions logs."""
 
 	dttm = models.DateTimeField(auto_now_add=True, db_index=True)
 	type = models.CharField(max_length=64)
@@ -247,8 +245,6 @@ class ActionLog(models.Model):
 
 
 class BotMenuElem(models.Model):
-	""" """
-
 	command = models.TextField(  # for multichoice start
 		null=True,
 		blank=True,  # todo: add manual check

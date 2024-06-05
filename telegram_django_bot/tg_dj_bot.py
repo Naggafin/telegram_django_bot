@@ -144,7 +144,6 @@ class TG_DJ_Bot(BotDJ):
 		telegram_message_kwargs - parse_mode, timeout, reply_markup, disable_web_page_preview, disable_notification and maybe other
 		:return:
 		"""
-
 		input_media_dict = {
 			MESSAGE_FORMAT.PHOTO: InputMediaPhoto,
 			MESSAGE_FORMAT.VIDEO: InputMediaVideo,
@@ -163,7 +162,7 @@ class TG_DJ_Bot(BotDJ):
 			raise ValueError(
 				f"not text message without media: got message_format={message_format}, media_files_list={media_files_list}"
 			)
-		elif type(media_files_list) != list:
+		elif isinstance(media_files_list, list):
 			raise ValueError(
 				f"media_files_list should be list, got {type(media_files_list)}: {media_files_list}"
 			)
@@ -184,14 +183,14 @@ class TG_DJ_Bot(BotDJ):
 
 		if update is None and chat_id is None:
 			raise ValueError(
-				f"update and chat_id could be together None -- to which chat send message then?"
+				"update and chat_id could be together None -- to which chat send message then?"
 			)
 
 		chat_id = chat_id or update.effective_user.id
 		# text = str(text)  # for internalization (django __proxy__ error)
 
 		telegram_message_kwargs = telegram_message_kwargs.copy()
-		if not "parse_mode" in telegram_message_kwargs:
+		if "parse_mode" not in telegram_message_kwargs:
 			telegram_message_kwargs["parse_mode"] = "HTML"
 
 		delete_message_id = None
@@ -346,7 +345,7 @@ class TG_DJ_Bot(BotDJ):
 					time_in_seconds = float(time_in_seconds)
 
 				time.sleep(time_in_seconds)
-			except Exception as e:
+			except Exception:
 				time.sleep(0.5)
 
 		return is_sent, res_mess

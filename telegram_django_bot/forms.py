@@ -30,7 +30,7 @@ class BaseTelegramForm(BaseForm):
 
 	@property
 	def form_name(self) -> str:
-		"""just for easy creating class. So, the name of class should be unique"""
+		"""Just for easy creating class. So, the name of class should be unique."""
 		return self.__str__()
 
 	def __repr__(self):
@@ -75,7 +75,7 @@ class BaseTelegramForm(BaseForm):
 					models_from_user, models_from_db
 				)
 
-		if type(data) is dict:
+		if isinstance(data, dict):
 			curr_data.update(data)
 
 		data = curr_data
@@ -108,7 +108,7 @@ class BaseTelegramForm(BaseForm):
 		self.fields, self.next_field = self._init_helper_fields_detection(data)
 
 	def save(self, commit=True):
-		"""save temp data to user data"""
+		"""Save temp data to user data."""
 		if self.is_valid():
 			self.user.save_form_in_db(
 				self.__class__.__name__, self.cleaned_data, do_save=commit
@@ -117,13 +117,11 @@ class BaseTelegramForm(BaseForm):
 			raise ValueError("cant save unvalid data")
 
 	def get_next_field(self):
-		"""info about next field for full validation (creating) form"""
+		"""Info about next field for full validation (creating) form."""
 		return self.next_field
 
 	def full_clean(self):
-		"""
-		Clean all of self.data and populate self._errors and self.cleaned_data.
-		"""
+		"""Clean all of self.data and populate self._errors and self.cleaned_data."""
 		self._errors = TelegramErrorDict()  # only for change TelegramErrorDict()
 		if not self.is_bound:  # Stop further processing.
 			return
@@ -152,7 +150,7 @@ class BaseTelegramModelForm(BaseTelegramForm, BaseModelForm):
 						== ModelMultipleChoiceField
 					):
 						info_from_user = data.get(model_field)
-						if not info_from_user is None:
+						if info_from_user is not None:
 							get_from_user_pks = set(info_from_user)
 							get_from_db = getattr(instance, model_field).all()
 							get_from_db_pks = set(el.pk for el in get_from_db)
@@ -163,7 +161,7 @@ class BaseTelegramModelForm(BaseTelegramForm, BaseModelForm):
 						else:
 							use_from_db = True
 
-					elif not model_field in data:
+					elif model_field not in data:
 						use_from_db = True
 
 					if use_from_db:
@@ -188,7 +186,6 @@ class BaseTelegramModelForm(BaseTelegramForm, BaseModelForm):
 		:param is_completed: special signal -- if not yet completed and no instance, then save only to user
 		:return:
 		"""
-
 		# there was add condition " len(set(self.base_fields.keys()) - set(self.fields.keys())) == 0: " --
 		# but with hidden unnecessary field could be len(set(self.base_fields.keys()) - set(self.fields.keys())) > 0
 		if (
@@ -204,8 +201,8 @@ class BaseTelegramModelForm(BaseTelegramForm, BaseModelForm):
 
 
 class TelegramForm(BaseTelegramForm, metaclass=DeclarativeFieldsMetaclass):
-	"""just for executing metaclass"""
+	"""Just for executing metaclass."""
 
 
 class TelegramModelForm(BaseTelegramModelForm, metaclass=ModelFormMetaclass):
-	"""just for executing metaclass"""
+	"""Just for executing metaclass."""

@@ -14,17 +14,14 @@ from .utils import add_log_action
 
 
 class TelegramViewSetMetaClass(type):
-	"""
-	Needed for inheritance information of command_routings_<func> and meta_texts_dict
-
-	"""
+	"""Needed for inheritance information of command_routings_<func> and meta_texts_dict."""
 
 	def __new__(mcs, name, bases, attrs):
 		# Collect fields from current class.
 
 		current_fields = []
 		for key, value in list(attrs.items()):
-			if key.startswith("command_routing_") and (type(value) == str) and value:
+			if key.startswith("command_routing_") and isinstance(value, str) and value:
 				current_fields.append((key, value))
 				attrs.pop(key)
 		attrs["command_routings"] = dict(current_fields)
@@ -128,7 +125,7 @@ class TelegramViewSet(metaclass=TelegramViewSetMetaClass):
 
 		for action in self.actions:
 			cr_action = f"command_routing_{action}"
-			if not cr_action in self.command_routings.keys():
+			if cr_action not in self.command_routings.keys():
 				raise ValueError(
 					f"for action {action} must be determinate {cr_action},"
 					f" but list is {self.command_routings.keys()}"
@@ -142,7 +139,7 @@ class TelegramViewSet(metaclass=TelegramViewSetMetaClass):
 
 	@property
 	def viewset_name(self) -> str:
-		"""just for easy creating class"""
+		"""Just for easy creating class."""
 		return self.__str__()
 
 	def __repr__(self):
@@ -156,8 +153,7 @@ class TelegramViewSet(metaclass=TelegramViewSetMetaClass):
 	# (one of the 5 main or self written) basing on user action, and finally send answer to user
 
 	def dispatch(self, bot, update, user):
-		"""terminate function for response"""
-
+		"""Terminate function for response."""
 		self.bot = bot
 		self.update = update
 		self.user = user
@@ -215,8 +211,7 @@ class TelegramViewSet(metaclass=TelegramViewSetMetaClass):
 	# 5 main functions for data managing
 
 	def create(self, field=None, value=None, initial_data=None):
-		"""creating item, could be several steps"""
-
+		"""Creating item, could be several steps."""
 		if field is None and value is None:
 			# then it is starting adding
 			self.user.clear_status(commit=False)
@@ -227,13 +222,13 @@ class TelegramViewSet(metaclass=TelegramViewSetMetaClass):
 
 	def change(self, model_or_pk, field, value=None):
 		"""
-		change item
+		Change item.
+		
 		:param model_or_pk: django models.Model or pk
 		:param field:
 		:param value:
 		:return:
 		"""
-
 		model = self.get_orm_model(model_or_pk)
 
 		self.user.clear_status(commit=True)
@@ -246,8 +241,7 @@ class TelegramViewSet(metaclass=TelegramViewSetMetaClass):
 			return self.gm_no_elem(model_or_pk)
 
 	def delete(self, model_or_pk, is_confirmed=False):
-		"""delete item"""
-
+		"""Delete item."""
 		model = self.get_orm_model(model_or_pk)
 
 		if model:
@@ -265,12 +259,12 @@ class TelegramViewSet(metaclass=TelegramViewSetMetaClass):
 
 	def show_elem(self, model_or_pk, mess=""):
 		"""
+		Show item details.
 
 		:param model_or_pk:
 		:param mess:
 		:return:
 		"""
-
 		# generate content
 		model = self.get_orm_model(model_or_pk)
 
@@ -287,7 +281,7 @@ class TelegramViewSet(metaclass=TelegramViewSetMetaClass):
 			return self.gm_no_elem(model_or_pk)
 
 	def show_list(self, page=0, per_page=10, columns=1, *args, **kwargs):
-		"""show list items"""
+		"""Show list items."""
 		page = int(page)
 
 		# generate content
@@ -349,7 +343,7 @@ class TelegramViewSet(metaclass=TelegramViewSetMetaClass):
 		data = {} if initial_data is None else copy.deepcopy(initial_data)
 
 		# understanding what user has sent
-		if (type(field) == str) and field:
+		if isinstance(field,str) and field:
 			field_value = None
 			if value:
 				if value == self.WRITE_MESSAGE_VARIANT_SYMBOLS:
@@ -363,7 +357,7 @@ class TelegramViewSet(metaclass=TelegramViewSetMetaClass):
 			elif self.update.message:
 				field_value = self.update.message.text
 
-			if not field_value is None:
+			if field_value is not None:
 				data[field] = (
 					field_value.split(",") if is_multichoice_field else field_value
 				)
@@ -443,7 +437,7 @@ class TelegramViewSet(metaclass=TelegramViewSetMetaClass):
 	def gm_show_elem_create_buttons(self, model, elem_per_raw=2):
 		buttons = []
 		if "change" in self.actions:
-			if type(self.updating_fields) == list and len(self.updating_fields):
+			if isinstance(self.updating_fields, list) and len(self.updating_fields) > 0:
 				updating_fields = self.updating_fields
 			else:
 				updating_fields = list(self.model_form.base_fields.keys())
@@ -502,7 +496,6 @@ class TelegramViewSet(metaclass=TelegramViewSetMetaClass):
 		:param is_elem: True for show_elem and false for show_list
 		:return:
 		"""
-
 		if "full_show" in kwargs:
 			is_elem = kwargs["full_show"]
 
@@ -528,7 +521,7 @@ class TelegramViewSet(metaclass=TelegramViewSetMetaClass):
 				value = ", ".join(
 					[f'{getattr(x, try_field, "# " + str(x.pk))}' for x in value]
 				)
-		elif type(value) != bool:
+		elif isinstance(value, bool):
 			value = ""
 
 		is_choice_field = issubclass(type(field), ChoiceField)
@@ -565,14 +558,14 @@ class TelegramViewSet(metaclass=TelegramViewSetMetaClass):
 		page_model_amount: int,
 	) -> []:
 		prev_page_button = inlinebutt(
-			text=f"◀️️️",
+			text="◀️️️",
 			callback_data=self.generate_message_callback_data(
 				self.command_routings["command_routing_show_list"],
 				str(page - 1),
 			),
 		)
 		next_page_button = inlinebutt(
-			text=f"️▶️️",
+			text="️▶️️",
 			callback_data=self.generate_message_callback_data(
 				self.command_routings["command_routing_show_list"],
 				str(page + 1),
@@ -636,7 +629,7 @@ class TelegramViewSet(metaclass=TelegramViewSetMetaClass):
 			[
 				[
 					inlinebutt(
-						text=text if not value in selected_variants else f"✅ {text}",
+						text=text if value not in selected_variants else f"✅ {text}",
 						callback_data=callback_path(value),
 					)
 				]
@@ -751,7 +744,7 @@ class TelegramViewSet(metaclass=TelegramViewSetMetaClass):
 						inlinebutt(
 							text=_("⬅️ Go back"),
 							callback_data=self.generate_message_callback_data(
-								self.command_routings[f"command_routing_show_elem"],
+								self.command_routings["command_routing_show_elem"],
 								instance_id,
 							),
 						)
@@ -847,7 +840,7 @@ class TelegramViewSet(metaclass=TelegramViewSetMetaClass):
 					inlinebutt(
 						text=_("⬅️ Go back"),
 						callback_data=self.generate_message_callback_data(
-							self.command_routings[f"command_routing_show_elem"],
+							self.command_routings["command_routing_show_elem"],
 							instance_id,
 						),
 					)

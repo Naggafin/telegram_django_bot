@@ -4,7 +4,7 @@ import telegram
 from django.conf import settings
 from test_app.models import User
 
-from telegram_django_bot.models import ActionLog, BotMenuElem, TeleDeepLink
+from telegram_django_bot.models import ActionLog, TeleDeepLink
 from telegram_django_bot.test import TD_TestCase
 from telegram_django_bot.utils import handler_decor
 

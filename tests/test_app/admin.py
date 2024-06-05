@@ -1,5 +1,4 @@
 from django.contrib import admin
-from django.db.models import Count, Q
 
 from telegram_django_bot.admin import TelegramUserAdmin as CustomUserAdmin
 

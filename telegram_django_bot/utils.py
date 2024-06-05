@@ -159,7 +159,7 @@ def handler_decor(log_type="F", update_user_info=True):
 # ButtonPagination WITHOUT WARRANTY
 class ButtonPagination:
 	"""
-	construct several pages with buttons
+	Construct several pages with buttons.
 
 	buttons -- array of buttons with values for display to user, button format:
 	    [text; value]
@@ -167,7 +167,6 @@ class ButtonPagination:
 	header_buttons -- buttons in the header for navigation or other cases, format:
 	   [text; value; callback_prefix]  -- if callback_prefix=None then self.callback_prefix is selected
 	footer_buttons -- same as header_buttons, but in the footer
-
 	"""
 
 	def __init__(
@@ -206,18 +205,18 @@ class ButtonPagination:
 
 	def value_page(self, value):
 		"""
-		select the default page for display
+		Select the default page for display.
 
 		:param value: ???
 		:return:
 		"""
-
 		selected_item_index = list(map(lambda x: x[1], self.buttons)).index(value)
 		return selected_item_index // self.buttons_per_page
 
 	def _select_page_buttons(self, page_num):
 		"""
-		select buttons for display on the page_num page. Func is created for easy logic redefinition.
+		Select buttons for display on the page_num page. Func is created for easy logic redefinition.
+		
 		:param page_num: if None, then  _select_page is called
 		:return:
 		"""
@@ -230,12 +229,11 @@ class ButtonPagination:
 		page_num=None,
 	):
 		"""
-		Created  inline buttons
+		Created inline buttons.
 
 		:param page_num:
 		:return:
 		"""
-
 		telegram_buttons = []
 		if page_num is None:
 			if self.selected_values:

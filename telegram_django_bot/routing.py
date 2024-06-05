@@ -115,7 +115,8 @@ class RouterCallbackMessageCommandHandler(Handler):
 
 	def check_update(self, update: object):
 		"""
-		check if callback or message (command actually is message)
+		Check if callback or message (command actually is message).
+		
 		:param update:
 		:return:
 		"""
@@ -149,7 +150,7 @@ class RouterCallbackMessageCommandHandler(Handler):
 
 		callback_func = self.get_callback_utrl(update)
 
-		if not callback_func is None:
+		if callback_func is not None:
 			if inspect.isclass(callback_func.func) and issubclass(
 				callback_func.func, TelegramViewSet
 			):

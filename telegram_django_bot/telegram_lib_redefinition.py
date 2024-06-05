@@ -19,7 +19,7 @@ def dj_translate_obj_2_string(obj):
 	if issubclass(type(obj), object) and obj.__class__.__name__ == "__proxy__":
 		return str(obj)
 
-	elif hasattr(obj, "__call__"):
+	elif callable(obj):
 		return obj.__call__()
 
 	return None  # if it is not django translate object
@@ -70,23 +70,20 @@ class KeyboardButtonDJ(TelegramDjangoObject2Json, KeyboardButton):
 class BotDJ(TelegramDjangoObject2Json, Bot):
 	def _check_django_localization(self, data):
 		"""
-		check 'text', 'caption' attributes for translation
+		Check 'text', 'caption' attributes for translation.
+		
 		:param data:
 		:return:
 		"""
 		for field in ["text", "caption"]:
-			if field in data and hasattr(data[field], "__call__"):
+			if field in data and callable(data[field]):
 				data[field] = data[field].__call__()
 			elif data.get(field):
 				data[field] = str(data[field])
 		return data
 
 	def _message(self, endpoint: str, data, *args, **kwargs):
-		"""
-		this method used in old versions.
-
-		"""
-
+		"""This method used in old versions."""
 		data = self._check_django_localization(data)
 
 		return super()._message(endpoint, data, *args, **kwargs)
@@ -98,10 +95,6 @@ class BotDJ(TelegramDjangoObject2Json, Bot):
 		*args,
 		**kwargs,
 	):
-		"""
-		this method used in new 20.x+ versions.
-
-		"""
-
+		"""This method used in new 20.x+ versions."""
 		data = self._check_django_localization(data)
 		return await super()._do_post(endpoint, data, *args, **kwargs)
