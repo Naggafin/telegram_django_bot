@@ -4,15 +4,30 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
+	dependencies = [
+		("telegram_django_bot", "0006_auto_20221023_0157"),
+	]
 
-    dependencies = [
-        ('telegram_django_bot', '0006_auto_20221023_0157'),
-    ]
-
-    operations = [
-        migrations.AlterField(
-            model_name='botmenuelem',
-            name='message_format',
-            field=models.CharField(choices=[('T', 'Text'), ('P', 'Image'), ('D', 'Document'), ('A', 'Audio'), ('V', 'Video'), ('G', 'GIF/animation'), ('TV', 'Voice'), ('VN', 'Video note'), ('S', 'Sticker'), ('L', 'Location'), ('GM', 'Media Group')], default='T', max_length=2),
-        ),
-    ]
+	operations = [
+		migrations.AlterField(
+			model_name="botmenuelem",
+			name="message_format",
+			field=models.CharField(
+				choices=[
+					("T", "Text"),
+					("P", "Image"),
+					("D", "Document"),
+					("A", "Audio"),
+					("V", "Video"),
+					("G", "GIF/animation"),
+					("TV", "Voice"),
+					("VN", "Video note"),
+					("S", "Sticker"),
+					("L", "Location"),
+					("GM", "Media Group"),
+				],
+				default="T",
+				max_length=2,
+			),
+		),
+	]

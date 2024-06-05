@@ -4,38 +4,47 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
+	dependencies = [
+		("telegram_django_bot", "0007_auto_20221202_0305"),
+	]
 
-    dependencies = [
-        ('telegram_django_bot', '0007_auto_20221202_0305'),
-    ]
-
-    operations = [
-        migrations.AlterField(
-            model_name='botmenuelemattrtext',
-            name='language_code',
-            field=models.CharField(max_length=16),
-        ),
-        migrations.AlterField(
-            model_name='botmenuelem',
-            name='buttons_db',
-            field=models.TextField(default='[]',
-                                   help_text='InlineKeyboardMarkup buttons list, ({"text": , "url" or "callback_data"})'),
-        ),
-        migrations.AlterField(
-            model_name='botmenuelem',
-            name='callbacks_db',
-            field=models.TextField(default='[]',
-                                   help_text='List of regular expressions (so far only an explicit list) for callbacks that call this menu block'),
-        ),
-        migrations.AlterField(
-            model_name='botmenuelem',
-            name='buttons_db',
-            field=models.TextField(default='[]',
-                                   help_text='InlineKeyboardMarkup buttons structure (double list of dict), where each button(dict) has next format: {"text": "text", "url": "google.com"} or {"text":"text", "callback_data": "data"})'),
-        ),
-        migrations.AlterField(
-            model_name='botmenuelem',
-            name='command',
-            field=models.TextField(blank=True, help_text='Bot command that can call this menu block', null=True),
-        ),
-    ]
+	operations = [
+		migrations.AlterField(
+			model_name="botmenuelemattrtext",
+			name="language_code",
+			field=models.CharField(max_length=16),
+		),
+		migrations.AlterField(
+			model_name="botmenuelem",
+			name="buttons_db",
+			field=models.TextField(
+				default="[]",
+				help_text='InlineKeyboardMarkup buttons list, ({"text": , "url" or "callback_data"})',
+			),
+		),
+		migrations.AlterField(
+			model_name="botmenuelem",
+			name="callbacks_db",
+			field=models.TextField(
+				default="[]",
+				help_text="List of regular expressions (so far only an explicit list) for callbacks that call this menu block",
+			),
+		),
+		migrations.AlterField(
+			model_name="botmenuelem",
+			name="buttons_db",
+			field=models.TextField(
+				default="[]",
+				help_text='InlineKeyboardMarkup buttons structure (double list of dict), where each button(dict) has next format: {"text": "text", "url": "google.com"} or {"text":"text", "callback_data": "data"})',
+			),
+		),
+		migrations.AlterField(
+			model_name="botmenuelem",
+			name="command",
+			field=models.TextField(
+				blank=True,
+				help_text="Bot command that can call this menu block",
+				null=True,
+			),
+		),
+	]

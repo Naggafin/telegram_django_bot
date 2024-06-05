@@ -4,15 +4,19 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
+	dependencies = [
+		("telegram_django_bot", "0005_auto_20221010_1330"),
+	]
 
-    dependencies = [
-        ('telegram_django_bot', '0005_auto_20221010_1330'),
-    ]
-
-    operations = [
-        migrations.AlterField(
-            model_name='botmenuelem',
-            name='command',
-            field=models.TextField(blank=True, help_text='Bot command that can call this menu block', null=True, unique=True),
-        ),
-    ]
+	operations = [
+		migrations.AlterField(
+			model_name="botmenuelem",
+			name="command",
+			field=models.TextField(
+				blank=True,
+				help_text="Bot command that can call this menu block",
+				null=True,
+				unique=True,
+			),
+		),
+	]

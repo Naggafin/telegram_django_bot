@@ -4,13 +4,12 @@ from django.db import migrations
 
 
 class Migration(migrations.Migration):
+	dependencies = [
+		("telegram_django_bot", "0001_initial"),
+	]
 
-    dependencies = [
-        ('telegram_django_bot', '0001_initial'),
-    ]
-
-    operations = [
-        migrations.DeleteModel(
-            name='User',
-        ),
-    ]
+	operations = [
+		migrations.DeleteModel(
+			name="User",
+		),
+	]

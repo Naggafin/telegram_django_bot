@@ -4,15 +4,14 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
+	dependencies = [
+		("telegram_django_bot", "0004_auto_20220915_0448"),
+	]
 
-    dependencies = [
-        ('telegram_django_bot', '0004_auto_20220915_0448'),
-    ]
-
-    operations = [
-        migrations.AlterField(
-            model_name='actionlog',
-            name='type',
-            field=models.CharField(max_length=64),
-        ),
-    ]
+	operations = [
+		migrations.AlterField(
+			model_name="actionlog",
+			name="type",
+			field=models.CharField(max_length=64),
+		),
+	]

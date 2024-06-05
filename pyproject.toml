@@ -1,0 +1,61 @@
+[project]
+requires-python = ">=3.10"
+
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "B", "Q", "D"]
+ignore = ["E501", "D401", "D206", "D205", "D106", "D103", "D102", "D101", "D100"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "pep257"
+
+[tool.ruff.format]
+indent-style = "tab"
+docstring-code-format = true
+
+
+[tool.vulture]
+# Configuration for vulture: https://github.com/jendrikseipp/vulture
+# Install in your virtual environment and run:
+# python -m vulture | tail -r | less
+# The below configuration tries to remove some false positives, but there are
+# still many, for example for model properties used only in templates.
+# See also:
+# https://adamj.eu/tech/2023/07/12/django-clean-up-unused-code-vulture/
+exclude = [
+  "*/settings.py",
+  "*/settings/*.py",
+  "*/migrations/*.py",
+]
+ignore_decorators = [
+  # Django
+  "@receiver",
+  "@register.filter",
+  "@register.inclusion_tag",
+  "@register.simple_tag",
+  # django.contrib.admin
+  "@admin.action",
+  "@admin.display",
+  "@admin.register",
+  # pytest
+  "@pytest.fixture",
+]
+ignore_names = [
+  # Django
+  "*Config",  # AppConfig subclasses
+  "*Middleware",
+  "clean_*",
+  "Meta",
+  "urlpatterns",
+  # django.contrib.admin
+  "get_extra",
+  "get_fieldsets",
+  "has_add_permission",
+  "has_change_permission",
+  "has_delete_permission",
+  "has_view_permission",
+  "lookups",
+]
+paths = [
+  "example",
+]
+sort_by_size = true

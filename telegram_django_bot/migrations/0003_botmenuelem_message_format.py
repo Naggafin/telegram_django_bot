@@ -4,15 +4,26 @@ from django.db import migrations, models
 
 
 class Migration(migrations.Migration):
+	dependencies = [
+		("telegram_django_bot", "0002_delete_user"),
+	]
 
-    dependencies = [
-        ('telegram_django_bot', '0002_delete_user'),
-    ]
-
-    operations = [
-        migrations.AddField(
-            model_name='botmenuelem',
-            name='message_format',
-            field=models.CharField(choices=[('T', 'текст'), ('P', 'фото'), ('D', 'документ'), ('A', 'аудио'), ('V', 'видео'), ('G', 'гифка/анимация'), ('GM', 'группа медиа')], default='T', max_length=2),
-        ),
-    ]
+	operations = [
+		migrations.AddField(
+			model_name="botmenuelem",
+			name="message_format",
+			field=models.CharField(
+				choices=[
+					("T", "текст"),
+					("P", "фото"),
+					("D", "документ"),
+					("A", "аудио"),
+					("V", "видео"),
+					("G", "гифка/анимация"),
+					("GM", "группа медиа"),
+				],
+				default="T",
+				max_length=2,
+			),
+		),
+	]
