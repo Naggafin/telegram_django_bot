@@ -1,0 +1,7 @@
+Created a local settings module
+Model for Telegram accounts has now been separated from the primary user model and exists as its own model
+Updated models to use conventional best practices with JSONField and indexes (involved the creation of a JSON encoder class)
+Added two permission classes for requiring authenticated and admin-only requests
+Added enum for log types
+Type-labeled function/method inputs for clarity
+Corrected some locale texts

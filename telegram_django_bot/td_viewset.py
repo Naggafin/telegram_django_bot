@@ -6,7 +6,7 @@ from django.db import models
 from django.forms import HiddenInput
 from django.forms.fields import BooleanField, ChoiceField
 from django.forms.models import ModelMultipleChoiceField
-from django.utils.translation import gettext as _, gettext_lazy
+from django.utils.translation import gettext_lazy as _
 
 from .permissions import PermissionAllowAny
 from .telegram_lib_redefinition import InlineKeyboardButtonDJ as inlinebutt
@@ -76,6 +76,10 @@ class TelegramViewSet(metaclass=TelegramViewSetMetaClass):
 	# viewset_name = ''  # used in message for user, redefined as property by default
 	foreign_filter_amount = 0
 
+	# If you want to use object lookups other than pk, set 'lookup_field'.
+	# For more complex lookup requirements override `get_object()`.
+	lookup_field = "pk"
+
 	prechoice_fields_values = {}
 
 	updating_fields = None
@@ -87,25 +91,23 @@ class TelegramViewSet(metaclass=TelegramViewSetMetaClass):
 	use_name_and_id_in_elem_showing = True
 
 	meta_texts_dict = {
-		"succesfully_deleted": gettext_lazy(
+		"succesfully_deleted": _(
 			"The %(viewset_name)s  %(model_id)s is successfully deleted."
 		),
-		"confirm_deleting": gettext_lazy(
-			"Are you sure you want to delete %(viewset_name)s  %(model_id)s?"
+		"confirm_deleting": _(
+			"Are you sure you want to delete %(viewset_name)s %(model_id)s?"
 		),
-		"confirm_delete_button_text": gettext_lazy("🗑 Yes, delete"),
-		"gm_next_field": gettext_lazy("Please, fill the field %(label)s\n\n"),
-		"gm_success_created": gettext_lazy("The %(viewset_name)s is created! \n\n"),
-		"gm_value_error": gettext_lazy(
+		"confirm_delete_button_text": _("🗑 Yes, delete"),
+		"gm_next_field": _("Please, fill the field %(label)s\n\n"),
+		"gm_success_created": _("The %(viewset_name)s is created!\n\n"),
+		"gm_value_error": _(
 			"While adding %(label)s the next errors were occurred: %(errors)s\n\n"
 		),
-		"gm_self_variant": gettext_lazy(
-			"Please, write the value for field %(label)s \n\n"
+		"gm_self_variant": _("Please, write the value for field %(label)s \n\n"),
+		"gm_no_elem": _(
+			"The %(viewset_name)s %(model_id)s has not been found 😱\nPlease try again from the beginning."
 		),
-		"gm_no_elem": gettext_lazy(
-			"The %(viewset_name)s %(model_id)s has not been found 😱 \nPlease try again from the beginning."
-		),
-		"leave_blank_button_text": gettext_lazy("Leave blank"),
+		"leave_blank_button_text": _("Leave blank"),
 	}
 
 	def __init__(self, prefix, user=None, bot=None, update=None, foreign_filters=None):
@@ -176,9 +178,8 @@ class TelegramViewSet(metaclass=TelegramViewSetMetaClass):
 
 		res = self.send_answer(chat_reply_action, chat_action_args, utrl)
 
-		utrl_path = utrl.split(self.ARGS_SEPARATOR_SYMBOL)[
-			0
-		]  # log without params as there are too much varients
+		# log without params as there are too much variants
+		utrl_path = utrl.split(self.ARGS_SEPARATOR_SYMBOL)[0]
 		add_log_action(self.user.id, utrl_path)
 		return res
 
@@ -197,11 +198,7 @@ class TelegramViewSet(metaclass=TelegramViewSetMetaClass):
 	def send_answer(self, chat_reply_action, chat_action_args, utrl, *args, **kwargs):
 		if chat_reply_action == self.CHAT_ACTION_MESSAGE:
 			message, buttons = chat_action_args
-			res = self.bot.edit_or_send(
-				self.update,
-				message,
-				buttons,
-			)
+			res = self.bot.edit_or_send(self.update, message, buttons)
 		else:
 			raise ValueError(
 				f"unknown chat_action {chat_reply_action} {utrl}, {self.user}"
@@ -214,7 +211,7 @@ class TelegramViewSet(metaclass=TelegramViewSetMetaClass):
 		"""Creating item, could be several steps."""
 		if field is None and value is None:
 			# then it is starting adding
-			self.user.clear_status(commit=False)
+			self.user.telegram_account.clear_status(commit=False)
 
 		return self.create_or_update_helper(
 			field, value, "create", initial_data=initial_data
@@ -223,7 +220,7 @@ class TelegramViewSet(metaclass=TelegramViewSetMetaClass):
 	def change(self, model_or_pk, field, value=None):
 		"""
 		Change item.
-		
+
 		:param model_or_pk: django models.Model or pk
 		:param field:
 		:param value:
@@ -231,7 +228,7 @@ class TelegramViewSet(metaclass=TelegramViewSetMetaClass):
 		"""
 		model = self.get_orm_model(model_or_pk)
 
-		self.user.clear_status(commit=True)
+		self.user.telegram_account.clear_status(commit=True)
 
 		if model:
 			return self.create_or_update_helper(
@@ -343,7 +340,7 @@ class TelegramViewSet(metaclass=TelegramViewSetMetaClass):
 		data = {} if initial_data is None else copy.deepcopy(initial_data)
 
 		# understanding what user has sent
-		if isinstance(field,str) and field:
+		if isinstance(field, str) and field:
 			field_value = None
 			if value:
 				if value == self.WRITE_MESSAGE_VARIANT_SYMBOLS:

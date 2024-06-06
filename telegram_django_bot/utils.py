@@ -1,29 +1,39 @@
+import enum
 import sys
 from calendar import monthcalendar
 from functools import wraps
 
 import telegram
+from allauth.utils import generate_unique_username
 from dateutil.relativedelta import relativedelta
-from django.conf import settings  # LANGUAGES, USE_I18N
+from django.conf import settings as django_settings  # LANGUAGES, USE_I18N
 from django.contrib.auth import get_user_model
+from django.core.exceptions import PermissionDenied
 from django.utils import timezone, translation
 from django.utils.translation import gettext_lazy as _
 
-from .models import ActionLog, TeleDeepLink
+from .conf import settings
+from .models import ActionLog, TeleDeepLink, TelegramAccount
 from .telegram_lib_redefinition import InlineKeyboardButtonDJ as inlinebutt
 
 ERROR_MESSAGE = _(
 	"Oops! It seems that an error has occurred, please write to support (contact in bio)!"
 )
-LOGGING_TELEGRAM_ACTIONS = getattr(settings, "TELEGRAM_ACTION_LOG", True)
 
 
-def add_log_action(user_id, action):
-	if LOGGING_TELEGRAM_ACTIONS:
-		ActionLog.objects.create(type=action, user_id=user_id)
+class LogType(enum.Enum):
+	function = "F"
+	callback = "C"
+	user_status = "U"
+	no_log = "N"
 
 
-def handler_decor(log_type="F", update_user_info=True):
+def add_log_action(user_id: int, action: str):
+	if settings.LOGGING_TELEGRAM_ACTIONS:
+		ActionLog.objects.create(type=action, telegram_account_id=user_id)
+
+
+def handler_decor(log_type: int = LogType.function, update_user_info: bool = True):
 	"""
 
 	:param log_type: 'F' -- функция, 'C' -- callback or command, 'U' -- user-status, 'N' -- NO LOG
@@ -33,72 +43,106 @@ def handler_decor(log_type="F", update_user_info=True):
 
 	def decor(func):
 		@wraps(func)
-		def wrapper(update, CallbackContext):
-			def check_first_income():
+		def wrapper(
+			update: telegram.Update, callback_context: telegram.ext.CallbackContext
+		):
+			def check_first_income(tg_user: TelegramAccount):
 				if update and update.message and update.message.text:
 					query_words = update.message.text.split()
 					if len(query_words) > 1 and query_words[0] == "/start":
 						telelink, _ = TeleDeepLink.objects.get_or_create(
 							link=query_words[1]
 						)
-						telelink.users.add(user)
+						telelink.telegram_accounts.add(tg_user)
 
-			bot = CallbackContext.bot
+			bot = callback_context.bot
 
 			user_details = update.effective_user
 			# if update.callback_query:
-			#     user_details = update.callback_query.from_user
+			# user_details = update.callback_query.from_user
 			# elif update.inline_query:
-			#     user_details = update.inline_query.from_user
+			# user_details = update.inline_query.from_user
 			# else:
-			#     user_details = update.message.from_user
+			# user_details = update.message.from_user
 
 			if user_details is None:
 				raise ValueError(
 					f"handler_decor is made for communication with user, current update has not any user: {update}"
 				)
 
-			User = get_user_model()
+			# new user
+			# todo: this whole process ought to use django-allauth for telegram signup/login
+			if not (
+				tg_user := TelegramAccount.objects.filter(id=user_details.id)
+				.select_related("user")
+				.first()
+			):
+				User = get_user_model()
 
-			user_adding_info = {
-				"username": "{}".format(user_details.id),
-				"telegram_language_code": user_details.language_code or "en",
-				"telegram_username": user_details.username[:64]
-				if user_details.username
-				else "",
-				"first_name": user_details.first_name[:30]
-				if user_details.first_name
-				else "",
-				"last_name": user_details.last_name[:60]
-				if user_details.last_name
-				else "",
-			}
+				username = user_details.username.replace("@", "").strip()
 
-			user, created = User.objects.get_or_create(
-				id=user_details.id, defaults=user_adding_info
-			)
+				if username:
+					lookup_kwargs = (
+						{"username_iexact": username}
+						if settings.CASE_INSENSITIVE_USERNAME_LOOKUP
+						else {"username": username}
+					)
+					user, created = User.objects.get_or_create(**lookup_kwargs)
+				elif settings.REQUIRE_USERNAME:
+					raise ValueError(
+						_(
+							"A username is required. Please add a username your Telegram account."
+						)
+					)
+				else:
+					texts = [username, user_details.first_name, user_details.last_name]
+					user, created = (
+						User.objects.create(username=generate_unique_username(texts)),
+						True,
+					)
 
-			if created:
-				add_log_action(user.id, "ACTION_CREATED")
-				check_first_income()
+				if created:
+					user_adding_info = {
+						"telegram_language_code": user_details.language_code,
+						"telegram_username": user_details.username[:64]
+						if user_details.username
+						else "",
+						"first_name": user_details.first_name[:30]
+						if user_details.first_name
+						else "",
+						"last_name": user_details.last_name[:60]
+						if user_details.last_name
+						else "",
+					}
+					tg_user = TelegramAccount(user=user, **user_adding_info)
+					tg_user.full_clean()
+					tg_user.save()
+
+					add_log_action(tg_user.pk, "ACTION_CREATED")
+					check_first_income(tg_user)
+
+			# existing user
 			elif update_user_info:
-				# check if telegram_username or first_name or last_name changed:
+				user = tg_user.user
+				# check if telegram_username or first_name or last_name changed
 				fields_changed = False
-				for key in ["telegram_username", "first_name", "last_name"]:
-					if getattr(user, key) != user_adding_info[key]:
-						setattr(user, key, user_adding_info[key])
+				for key in ("telegram_username", "first_name", "last_name"):
+					if getattr(tg_user, key) != user_adding_info[key]:
+						setattr(tg_user, key, user_adding_info[key])
 						fields_changed = True
 
 				if fields_changed:
-					user.save()
+					tg_user.save()
 
 			if not user.is_active:
-				check_first_income()
+				if not settings.ACTIVATE_INACTIVE_USERS:
+					raise PermissionDenied(_("This account is inactive."))
+				check_first_income(tg_user)
 				user.is_active = True
 				user.save()
 
-			if settings.USE_I18N:
-				translation.activate(user.language_code)
+			if django_settings.USE_I18N:
+				translation.activate(tg_user.language_code)
 
 			raise_error = None
 			try:
@@ -108,41 +152,38 @@ def handler_decor(log_type="F", update_user_info=True):
 					res = None
 				else:
 					res = bot.send_message(
-						user.id, str(ERROR_MESSAGE)
+						user.pk, str(ERROR_MESSAGE)
 					)  # should be bot.send_format_message
 					tb = sys.exc_info()[2]
 					raise_error = error.with_traceback(tb)
 			except Exception as error:
 				res = bot.send_message(
-					user.id, str(ERROR_MESSAGE)
+					user.pk, str(ERROR_MESSAGE)
 				)  # should be bot.send_format_message
 				tb = sys.exc_info()[2]
 				raise_error = error.with_traceback(tb)
 
 			# log actions
 
-			if log_type != "N":
-				if log_type == "C":
+			if log_type != LogType.no_log:
+				if log_type == LogType.callback:
 					if update.callback_query:
 						log_value = update.callback_query.data
 					else:
 						log_value = update.message.text
-				elif log_type == "U":
+				elif log_type == LogType.user_status:
 					log_value = user.current_utrl
-				# elif log_type == 'F':
+				# elif log_type == LogType.function:
 				else:
 					log_value = func.__name__
 
 				add_log_action(user.id, log_value[:32])
 
-			if (
-				ActionLog.objects.filter(
-					user=user,
-					type="ACTION_ACTIVE_TODAY",
-					dttm__date=timezone.now().date(),
-				).count()
-				== 0
-			):
+			if not ActionLog.objects.filter(
+				user=user,
+				type="ACTION_ACTIVE_TODAY",
+				dttm__date=timezone.now().date(),
+			).exists():
 				add_log_action(user.id, "ACTION_ACTIVE_TODAY")
 
 			if raise_error:
@@ -162,11 +203,12 @@ class ButtonPagination:
 	Construct several pages with buttons.
 
 	buttons -- array of buttons with values for display to user, button format:
-	    [text; value]
+	   [text; value]
 	selected_buttons -- selected buttons (add icon)
 	header_buttons -- buttons in the header for navigation or other cases, format:
 	   [text; value; callback_prefix]  -- if callback_prefix=None then self.callback_prefix is selected
 	footer_buttons -- same as header_buttons, but in the footer
+
 	"""
 
 	def __init__(
@@ -216,7 +258,7 @@ class ButtonPagination:
 	def _select_page_buttons(self, page_num):
 		"""
 		Select buttons for display on the page_num page. Func is created for easy logic redefinition.
-		
+
 		:param page_num: if None, then  _select_page is called
 		:return:
 		"""
@@ -224,10 +266,7 @@ class ButtonPagination:
 			page_num * self.buttons_per_page : (page_num + 1) * self.buttons_per_page
 		]
 
-	def construct_inline_curr_page(
-		self,
-		page_num=None,
-	):
+	def construct_inline_curr_page(self, page_num=None):
 		"""
 		Created inline buttons.
 

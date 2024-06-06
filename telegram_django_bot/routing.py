@@ -1,14 +1,13 @@
 import inspect
 import logging
 
+import telegram
 from django.conf import settings
-from django.contrib.auth import get_user_model
 from django.urls import Resolver404, resolve, reverse
-from telegram import Update
 
-from .models import BotMenuElem
+from .models import BotMenuElem, TelegramAccount
 from .td_viewset import TelegramViewSet
-from .utils import handler_decor
+from .utils import LogType, handler_decor
 
 try:
 	# version 20.x +
@@ -47,8 +46,8 @@ def telegram_reverse(
 	return response
 
 
-@handler_decor(log_type="C")
-def all_command_bme_handler(bot, update, user):
+@handler_decor(log_type=LogType.callback)
+def all_command_bme_handler(bot: telegram.Bot, update: telegram.Update, user):
 	if len(update.message.text[1:]) and "start" == update.message.text[1:].split()[0]:
 		menu_elem = None
 		if len(update.message.text[1:]) > 6:  # 'start ' + something
@@ -70,8 +69,8 @@ def all_command_bme_handler(bot, update, user):
 	return bot.send_botmenuelem(update, user, menu_elem)
 
 
-@handler_decor(log_type="C")
-def all_callback_bme_handler(bot, update, user):
+@handler_decor(log_type=LogType.callback)
+def all_callback_bme_handler(bot: telegram.Bot, update: telegram.Update, user):
 	menu_elem = BotMenuElem.objects.filter(
 		callbacks_db__contains=update.callback_query.data,
 		is_visable=True,
@@ -87,40 +86,46 @@ class RouterCallbackMessageCommandHandler(Handler):
 		self.utrl_conf = utrl_conf
 		self.only_utrl = only_utrl  # without BME elems
 
-	def get_callback_utrl(self, update):
-		callback_func = None
+	def get_callback_utrl(self, update: telegram.Update):
+		resolver_match = None
 		# check if utrls
 		if update.callback_query:
-			callback_func = telegram_resolve(update.callback_query.data, self.utrl_conf)
+			resolver_match = telegram_resolve(
+				update.callback_query.data, self.utrl_conf
+			)
 		elif (
 			update.message and update.message.text and update.message.text[0] == "/"
 		):  # is it ok? seems message couldnt be an url
-			callback_func = telegram_resolve(update.message.text, self.utrl_conf)
+			resolver_match = telegram_resolve(update.message.text, self.utrl_conf)
 
-		if callback_func is None:
+		if resolver_match is None:
 			# update.message -- could be data or info for managing, command could not be a data, it is managing info
 			if update.message and (
 				update.message.text is None or update.message.text[0] != "/"
 			):
-				user_details = update.message.from_user
+				user_details = update.effective_user
 
-				user = get_user_model().objects.filter(id=user_details.id).first()
-				if user:
-					logging.info(f"user.current_utrl {user.current_utrl}")
-					if user.current_utrl:
-						callback_func = telegram_resolve(
-							user.current_utrl, self.utrl_conf
+				tg_user = (
+					TelegramAccount.objects.filter(id=user_details.id)
+					.only("current_utrl")
+					.first()
+				)
+				if tg_user is not None:
+					logging.info(f"tg_user.current_utrl {tg_user.current_utrl}")
+					if tg_user.current_utrl:
+						resolver_match = telegram_resolve(
+							tg_user.current_utrl, self.utrl_conf
 						)
-		return callback_func
+		return resolver_match
 
 	def check_update(self, update: object):
 		"""
 		Check if callback or message (command actually is message).
-		
+
 		:param update:
 		:return:
 		"""
-		if isinstance(update, Update) and (
+		if isinstance(update, telegram.Update) and (
 			update.effective_message or update.callback_query
 		):
 			callback = self.get_callback_utrl(update)
@@ -132,8 +137,8 @@ class RouterCallbackMessageCommandHandler(Handler):
 					and update.message.text
 					and update.message.text[0] == "/"
 				):
-					# if it is a command then it should be  early in handlers
-					# or in BME (then return True
+					# if it is a command then it should be early in handlers
+					# or in BME (then return True)
 					return True
 				elif update.callback_query:
 					return True
@@ -141,29 +146,27 @@ class RouterCallbackMessageCommandHandler(Handler):
 
 	def handle_update(
 		self,
-		update,
-		dispatcher,
+		update: telegram.Update,
+		dispatcher: telegram.ext.Dispatcher,
 		check_result: object,
 		context=None,
 	):
 		# todo: add flush utrl and data if viewset utrl change or error
 
-		callback_func = self.get_callback_utrl(update)
+		resolver_match = self.get_callback_utrl(update)
 
-		if callback_func is not None:
-			if inspect.isclass(callback_func.func) and issubclass(
-				callback_func.func, TelegramViewSet
+		if resolver_match is not None:
+			if inspect.isclass(resolver_match.func) and issubclass(
+				resolver_match.func, TelegramViewSet
 			):
-				viewset = callback_func.func(callback_func.route)
+				viewset = resolver_match.func(resolver_match.route)
 
-				decorating = handler_decor(
-					log_type="N",
-				)
+				decorating = handler_decor(log_type=LogType.no_log)
 
 				callback_func = decorating(viewset.dispatch)
 
 			else:
-				callback_func = callback_func.func
+				callback_func = resolver_match.func
 
 		# check if in BME (we do not need check only_utrl here, as there was a check in self.check_update)
 		if callback_func is None:

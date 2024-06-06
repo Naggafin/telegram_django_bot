@@ -71,7 +71,7 @@ class BotDJ(TelegramDjangoObject2Json, Bot):
 	def _check_django_localization(self, data):
 		"""
 		Check 'text', 'caption' attributes for translation.
-		
+
 		:param data:
 		:return:
 		"""
