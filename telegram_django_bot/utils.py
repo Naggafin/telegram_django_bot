@@ -8,7 +8,6 @@ from allauth.utils import generate_unique_username
 from dateutil.relativedelta import relativedelta
 from django.conf import settings as django_settings  # LANGUAGES, USE_I18N
 from django.contrib.auth import get_user_model
-from django.core.exceptions import PermissionDenied
 from django.utils import timezone, translation
 from django.utils.translation import gettext_lazy as _
 
@@ -59,11 +58,11 @@ def handler_decor(log_type: int = LogType.function, update_user_info: bool = Tru
 
 			user_details = update.effective_user
 			# if update.callback_query:
-			# user_details = update.callback_query.from_user
+			#     user_details = update.callback_query.from_user
 			# elif update.inline_query:
-			# user_details = update.inline_query.from_user
+			#     user_details = update.inline_query.from_user
 			# else:
-			# user_details = update.message.from_user
+			#     user_details = update.message.from_user
 
 			if user_details is None:
 				raise ValueError(
@@ -134,12 +133,10 @@ def handler_decor(log_type: int = LogType.function, update_user_info: bool = Tru
 				if fields_changed:
 					tg_user.save()
 
-			if not user.is_active:
-				if not settings.ACTIVATE_INACTIVE_USERS:
-					raise PermissionDenied(_("This account is inactive."))
+			if tg_user.is_blocked:
 				check_first_income(tg_user)
-				user.is_active = True
-				user.save()
+				tg_user.is_blocked = False
+				tg_user.save()
 
 			if django_settings.USE_I18N:
 				translation.activate(tg_user.language_code)
@@ -152,14 +149,16 @@ def handler_decor(log_type: int = LogType.function, update_user_info: bool = Tru
 					res = None
 				else:
 					res = bot.send_message(
-						user.pk, str(ERROR_MESSAGE)
-					)  # should be bot.send_format_message
+						user.pk,
+						str(ERROR_MESSAGE),  # should be bot.send_format_message
+					)
 					tb = sys.exc_info()[2]
 					raise_error = error.with_traceback(tb)
 			except Exception as error:
 				res = bot.send_message(
-					user.pk, str(ERROR_MESSAGE)
-				)  # should be bot.send_format_message
+					user.pk,
+					str(ERROR_MESSAGE),  # should be bot.send_format_message
+				)
 				tb = sys.exc_info()[2]
 				raise_error = error.with_traceback(tb)
 

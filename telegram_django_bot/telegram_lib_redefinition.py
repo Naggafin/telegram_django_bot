@@ -85,16 +85,9 @@ class BotDJ(TelegramDjangoObject2Json, Bot):
 	def _message(self, endpoint: str, data, *args, **kwargs):
 		"""This method used in old versions."""
 		data = self._check_django_localization(data)
-
 		return super()._message(endpoint, data, *args, **kwargs)
 
-	async def _do_post(
-		self,
-		endpoint: str,
-		data,
-		*args,
-		**kwargs,
-	):
+	async def _do_post(self, endpoint: str, data, *args, **kwargs):
 		"""This method used in new 20.x+ versions."""
 		data = self._check_django_localization(data)
 		return await super()._do_post(endpoint, data, *args, **kwargs)

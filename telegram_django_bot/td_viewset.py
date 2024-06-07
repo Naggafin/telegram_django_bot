@@ -142,7 +142,7 @@ class TelegramViewSet(metaclass=TelegramViewSetMetaClass):
 	@property
 	def viewset_name(self) -> str:
 		"""Just for easy creating class."""
-		return self.__str__()
+		return repr(self)
 
 	def __repr__(self):
 		return f"{self.__class__.__name__}"

@@ -2,7 +2,7 @@ import logging
 import sys
 import time
 
-from django.conf import settings  # LANGUAGES, USE_I18N
+from django.conf import django_settings  # LANGUAGES, USE_I18N
 from django.utils import translation
 from telegram import (
 	InputMediaAnimation,
@@ -16,10 +16,7 @@ from telegram import (
 )
 
 from .models import MESSAGE_FORMAT, BotMenuElem
-from .telegram_lib_redefinition import (  # TelegramDjangoObject2Json,
-	BotDJ,
-	InlineKeyboardMarkupDJ,
-)
+from .telegram_lib_redefinition import BotDJ, InlineKeyboardMarkupDJ
 from .utils import ERROR_MESSAGE, add_log_action
 
 
@@ -67,8 +64,8 @@ class TG_DJ_Bot(BotDJ):
 		extra_kwargs = {}
 
 		if menu_elem is None:
-			if settings.USE_I18N:
-				translation.activate(user.language_code)
+			if django_settings.USE_I18N:
+				translation.activate(user.telegram_account.language_code)
 
 			message_format = MESSAGE_FORMAT.TEXT
 			mess = str(ERROR_MESSAGE)
@@ -84,8 +81,11 @@ class TG_DJ_Bot(BotDJ):
 				f"Try to find BME {utrl}, but there is no such models, so the error message shown for the client"
 			)
 		else:
-			language_code = settings.LANGUAGE_CODE
-			if settings.USE_I18N and user.language_code != settings.LANGUAGE_CODE:
+			language_code = django_settings.LANGUAGE_CODE
+			if (
+				django_settings.USE_I18N
+				and user.telegram_account.language_code != django_settings.LANGUAGE_CODE
+			):
 				language_code = user.language_code
 
 			message_format = menu_elem.message_format
@@ -162,7 +162,7 @@ class TG_DJ_Bot(BotDJ):
 			raise ValueError(
 				f"not text message without media: got message_format={message_format}, media_files_list={media_files_list}"
 			)
-		elif isinstance(media_files_list, list):
+		elif not isinstance(media_files_list, list):
 			raise ValueError(
 				f"media_files_list should be list, got {type(media_files_list)}: {media_files_list}"
 			)
@@ -205,7 +205,7 @@ class TG_DJ_Bot(BotDJ):
 				or prev_mess.text is None
 				and message_format == MESSAGE_FORMAT.TEXT
 			):
-				# prev_mess.document and message_format != MESSAGE_FORMAT.DOCUMENT or \
+				#  prev_mess.document and message_format != MESSAGE_FORMAT.DOCUMENT or \
 				#  prev_mess.audio and message_format != MESSAGE_FORMAT.AUDIO or \
 				#  prev_mess.photo and message_format != MESSAGE_FORMAT.PHOTO or \
 				#  prev_mess.video and message_format != MESSAGE_FORMAT.VIDEO or \
@@ -276,6 +276,7 @@ class TG_DJ_Bot(BotDJ):
 						telegram_func = bot.send_sticker
 					elif message_format == MESSAGE_FORMAT.LOCATION:
 						raise NotImplementedError()
+					# fixme: why not include elif and have else raise NotImplementedError as fallback?
 					# elif message_format == MESSAGE_FORMAT.DOCUMENT:
 					else:
 						telegram_func = bot.send_document
@@ -288,7 +289,7 @@ class TG_DJ_Bot(BotDJ):
 					)
 
 		media_files_codes = []
-		if type(response) == Message:
+		if isinstance(response, Message):
 			media_file = (
 				response.document
 				or response.audio
@@ -308,38 +309,38 @@ class TG_DJ_Bot(BotDJ):
 		is_sent = False
 		res_mess = None
 		try:
-			if settings.USE_I18N:
-				translation.activate(user.language_code)
+			if django_settings.USE_I18N:
+				translation.activate(user.telegram_account.language_code)
 
 			res_mess = func(*func_args, **func_kwargs)
 			is_sent = True
 			time.sleep(0.035)
 
 		except error.Unauthorized as e:
-			logging.info(f"user blocked {e}, {user.id}\n")
-			user.is_active = False
-			user.save()
-			add_log_action(user.id, "TYPE_BLOCKED")
+			logging.info(f"user blocked {e}, {user.telegram_account.pk}\n")
+			user.telegram_account.is_blocked = True
+			user.telegram_account.save()
+			add_log_action(user.telegram_account.pk, "TYPE_BLOCKED")
 
-		except error.BadRequest as ee:
-			if ee.message == "Chat not found":
-				user.is_active = False
-				user.save()
-				add_log_action(user.id, "TYPE_BLOCKED")
+		except error.BadRequest as e:
+			if e.message == "Chat not found":
+				user.telegram_account.is_blocked = True
+				user.telegram_account.save()
+				add_log_action(user.telegram_account.pk, "TYPE_BLOCKED")
 
 			else:
 				logging.error(
-					f"{ee.with_traceback(sys.exc_info()[2])} \n user={user.id}, {func}, {func_args}, {func_kwargs}"
+					f"{e.with_traceback(sys.exc_info()[2])} \n user={user.telegram_account.pk}, {func}, {func_args}, {func_kwargs}"
 				)
 
-		except Exception as ee:
+		except Exception as e:
 			logging.error(
-				f"{ee.with_traceback(sys.exc_info()[2])} \n user={user.id}, {func}, {func_args}, {func_kwargs}"
+				f"{e.with_traceback(sys.exc_info()[2])} \n user={user.telegram_account.pk}, {func}, {func_args}, {func_kwargs}"
 			)
 			time_in_seconds = 0.4
 			try:
-				if "Flood control exceeded. Retry in " in str(ee):
-					time_in_seconds = str(ee)[
+				if "Flood control exceeded. Retry in " in str(e):
+					time_in_seconds = str(e)[
 						len("Flood control exceeded. Retry in ") :
 					].split()[0]
 					time_in_seconds = float(time_in_seconds)

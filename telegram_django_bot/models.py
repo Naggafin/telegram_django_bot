@@ -113,6 +113,8 @@ class TelegramAccount(models.Model):
 		editable=False,
 	)
 
+	date_added = models.DateField(auto_now_add=True)
+
 	seed_code = models.IntegerField(default=_seed_code, editable=False)
 	telegram_id = models.BigIntegerField(primary_key=True, editable=False)
 	telegram_username = models.CharField(
@@ -120,7 +122,7 @@ class TelegramAccount(models.Model):
 	)
 	telegram_language_code = models.CharField(
 		max_length=16, default=django_settings.LANGUAGE_CODE
-	)  # todo: could be with dialects
+	)
 
 	timezone = models.DurationField(default=_default_timezone)
 
@@ -141,10 +143,13 @@ class TelegramAccount(models.Model):
 		blank=True,
 	)
 
+	is_blocked = models.BooleanField(default=False)
+
 	def __str__(self):
-		return (
-			f"U({self.id}, {self.telegram_username or '-'}, {self.first_name or '-'})"
-		)
+		return self.telegram_username if self.telegram_username else f"#{self.pk}"
+
+	def __repr__(self):
+		return f"TelegramAccount({self.pk}, {self.telegram_username or '-'}, {self.first_name or '-'})"
 
 	@property
 	def id(self):
@@ -441,6 +446,6 @@ class Trigger(AbstractActiveModel):
 
 class UserTrigger(TelegramAbstractActiveModel):
 	trigger = models.ForeignKey(Trigger, on_delete=models.PROTECT)
-	user = models.ForeignKey(django_settings.AUTH_USER_MODEL, on_delete=models.PROTECT)
+	telegram_account = models.ForeignKey(TelegramAccount, on_delete=models.PROTECT)
 
 	is_sent = models.BooleanField(default=False)

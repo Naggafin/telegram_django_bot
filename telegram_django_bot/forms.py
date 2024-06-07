@@ -31,7 +31,7 @@ class BaseTelegramForm(BaseForm):
 	@property
 	def form_name(self) -> str:
 		"""Just for easy creating class. So, the name of class should be unique."""
-		return self.__str__()
+		return repr(self)
 
 	def __repr__(self):
 		return f"{self.__class__.__name__}"
@@ -55,14 +55,14 @@ class BaseTelegramForm(BaseForm):
 				new_pks = []
 		return list(new_pks)
 
-	def _init_helper_get_data(self, user, data):
+	def _init_helper_get_data(self, tg_user, data):
 		# import pdb;pdb.set_trace()
 
 		curr_data = {}
-		if user.current_utrl_form.get("form_name") == self.__class__.__name__:
-			curr_data = user.current_utrl_form.get("form_data")
+		if tg_user.current_utrl_form.get("form_name") == self.__class__.__name__:
+			curr_data = tg_user.current_utrl_form.get("form_data")
 		else:
-			user.clear_status()
+			tg_user.clear_status()
 
 		for model_field in self.base_fields:
 			if (
@@ -100,7 +100,7 @@ class BaseTelegramForm(BaseForm):
 
 	def __init__(self, user, data=None, files=None, initial=None):
 		self.user = user
-		data = self._init_helper_get_data(user, data)
+		data = self._init_helper_get_data(user.telegram_account, data)
 
 		super().__init__(data, files, initial=initial)
 		# self.error_class = TelegramErrorList
@@ -110,9 +110,9 @@ class BaseTelegramForm(BaseForm):
 	def save(self, commit=True):
 		"""Save temp data to user data."""
 		if self.is_valid():
-			self.user.save_form_in_db(
-				self.__class__.__name__, self.cleaned_data, do_save=commit
-			)
+			self.user.telegram_account.current_utrl_form = self.cleaned_data
+			if commit:
+				self.user.telegram_account.save()
 		else:
 			raise ValueError("cant save unvalid data")
 
@@ -140,7 +140,7 @@ class BaseTelegramModelForm(BaseTelegramForm, BaseModelForm):
 	def __init__(self, user, data=None, files=None, initial=None, instance=None):
 		self.user = user
 		if instance is None:
-			data = self._init_helper_get_data(user, data)
+			data = self._init_helper_get_data(user.telegram_account, data)
 		else:
 			for model_field in self.base_fields:
 				use_from_db = False
@@ -195,7 +195,7 @@ class BaseTelegramModelForm(BaseTelegramForm, BaseModelForm):
 		):
 			# full valid form
 			BaseModelForm.save(self, commit=commit)
-			self.user.clear_status()
+			self.user.telegram_account.clear_status()
 		else:
 			BaseTelegramForm.save(self, commit=commit)
 

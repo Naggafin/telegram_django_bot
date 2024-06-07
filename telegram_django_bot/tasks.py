@@ -1,11 +1,10 @@
 from celery import current_app
-from django.conf import settings
-from django.contrib.auth import get_user_model
 from django.db.models import Count, Exists, OuterRef
 from django.db.models.functions import Coalesce
 from django.utils import timezone
 
-from .models import ActionLog, Trigger, UserTrigger
+from .conf import settings
+from .models import ActionLog, TelegramAccount, Trigger, UserTrigger
 from .tg_dj_bot import TG_DJ_Bot
 
 
@@ -20,18 +19,17 @@ def create_triggers():
 		}
 
 	dttm_now = timezone.now()
-	User = get_user_model()
 
 	for trigger in (
 		Trigger.objects.bot_filter_active()
 		.order_by("-priority")
 		.select_related("botmenuelem")
 	):
-		users = User.objects.filter(is_active=True)
+		tg_users = TelegramAccount.objects.filter(is_blocked=False)
 
 		seeds = trigger.condition.pop("seeds", [])
 		if seeds:
-			users = users.filter(seed_code__in=seeds)
+			tg_users = tg_users.filter(seed_code__in=seeds)
 
 		# sequence = trigger.condition.pop('sequence', [])
 		# if len(sequence):
@@ -43,7 +41,7 @@ def create_triggers():
 		#             for key, value in elem.items():
 		#                 kwargs[f'actionlog__{key}'] = value
 		#             query |= Q(**kwargs)
-		#     users = users.filter(query)
+		#     tg_users = tg_users.filter(query)
 
 		# exclude = trigger.condition.pop('exclude', [])
 		# if len(exclude):
@@ -53,7 +51,7 @@ def create_triggers():
 		#         for key, value in elem.items():
 		#             kwargs[f'actionlog__{key}'] = value
 		#         query |= Q(**kwargs)
-		#     users = users.exclude(query)
+		#     tg_users = tg_users.exclude(query)
 
 		check_amount = trigger.condition.pop("amount", [])
 		if len(check_amount):
@@ -70,38 +68,41 @@ def create_triggers():
 					key = f"amount{it}"
 					subquery = (
 						ActionLog.objects.filter(
-							user_id=OuterRef("id"),
+							telegram_account_id=OuterRef("telegram_id"),
 							**filter_kwargs,
 						)
-						.values("user_id")
-						.annotate(amount=Count("user_id"))
+						.values("telegram_account_id")
+						.annotate(amount=Count("telegram_account_id"))
 						.values("amount")
 					)
 
-					users = users.annotate(**{key: Coalesce(subquery, 0)}).filter(
+					tg_users = tg_users.annotate(**{key: Coalesce(subquery, 0)}).filter(
 						**{f"{key}__{filter_key}": filter_value}
 					)
 
 		user_triggers = UserTrigger.objects.filter(
 			trigger=trigger,
-			user=OuterRef("id"),
+			telegram_account_id=OuterRef("telegram_id"),
 			dttm_added__gte=dttm_now - trigger.min_duration,
 		)
 
-		users = users.annotate(exist_trigger=Exists(user_triggers)).filter(
+		tg_users = tg_users.annotate(exist_trigger=Exists(user_triggers)).filter(
 			exist_trigger=False
 		)
 
 		# todo: intersection with other triggers -- minimum time between triggers to do?
 
 		UserTrigger.objects.bulk_create(
-			[UserTrigger(trigger=trigger, user=user) for user in users]
+			[
+				UserTrigger(trigger=trigger, telegram_account=tg_user)
+				for tg_user in tg_users
+			]
 		)
 
 		trig_users = []
-		for user in users:
-			trig_users.append(user.id)
-			if len(trig_users) == 500:
+		for tg_user in tg_users:
+			trig_users.append(tg_user.pk)
+			if len(trig_users) >= settings.SEND_TRIGGER_BLOCK_SIZE:
 				send_triggers.delay(trig_users)
 				trig_users = []
 
@@ -114,18 +115,18 @@ def send_triggers(user_ids):
 	dttm_now = timezone.now()
 	UserTrigger.objects.filter(
 		is_sent=False,
-		user_id__in=user_ids,
+		telegram_account_id__in=user_ids,
 		dttm_added__lt=dttm_now
 		- timezone.timedelta(
-			hours=16
-		),  # triggers not sent in the first 16 hours are deleted
+			hours=16  # triggers not sent in the first 16 hours are deleted
+		),
 	).update(dttm_deleted=dttm_now)
 
 	user_triggers = UserTrigger.objects.filter(
 		is_sent=False,
 		dttm_deleted__isnull=True,
-		user_id__in=user_ids,
-	).select_related("trigger", "trigger__botmenuelem", "user")
+		telegram_account_id__in=user_ids,
+	).select_related("trigger", "trigger__botmenuelem", "telegram_account__user")
 
 	bot = TG_DJ_Bot(settings.TELEGRAM_TOKEN)
 
@@ -136,9 +137,9 @@ def send_triggers(user_ids):
 	for user_trigger in user_triggers:
 		is_sent, res_mess = bot.task_send_message_handler(
 			_send_wrapper,
-			user_trigger.user,
+			user_trigger.telegram_account.user,
 			None,
-			user_trigger.user,  # for task_send_message_handler и для send_botmenuelem
+			user_trigger.telegram_account.user,  # for task_send_message_handler и для send_botmenuelem
 			user_trigger.trigger.botmenuelem,
 		)
 		if is_sent:
@@ -149,7 +150,10 @@ def send_triggers(user_ids):
 	)
 	ActionLog.objects.bulk_create(
 		[
-			ActionLog(type=f"TRIGGER_SENT-{x.trigger_id}", user_id=x.user_id)
+			ActionLog(
+				type=f"TRIGGER_SENT-{x.trigger_id}",
+				telegram_account_id=x.telegram_account_id,
+			)
 			for x in sent_user_triggers
 		]
 	)

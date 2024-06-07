@@ -1,10 +1,11 @@
-import csv
-
 from django.apps import apps
 from django.contrib import admin
 from django.db.models import Count
-from django.http import HttpResponse
 from django.utils.translation import gettext_lazy as _
+from import_export.admin import (
+	ExportActionModelAdmin,
+	ImportExportActionModelAdmin,
+)
 
 from .admin_utils import (
 	CustomRelatedOnlyDropdownFilter,
@@ -15,62 +16,59 @@ from .models import (
 	BotMenuElem,
 	BotMenuElemAttrText,
 	TeleDeepLink,
+	TelegramAccount,
 	Trigger,
 	UserTrigger,
 )
+from .resources import (
+	ActionLogResource,
+	BotMenuElemAttrTextResource,
+	BotMenuElemResource,
+	TeleDeepLinkResource,
+	TelegramAccountResource,
+	TriggerResource,
+	UserTriggerResource,
+)
 
 
-class CustomModelAdmin(admin.ModelAdmin):
-	def export_as_csv(self, request, queryset):
-		meta = self.model._meta
-		file_name = str(meta).replace(".", "_")
+@admin.register(TelegramAccount)
+class TelegramAccountAdmin(ExportActionModelAdmin):
+	resource_class = TelegramAccountResource
 
-		field_names = [field.name for field in meta.fields]
-
-		response = HttpResponse(content_type="text/csv")
-		response["Content-Disposition"] = "attachment; filename={}.csv".format(
-			file_name
-		)
-		writer = csv.writer(response)
-
-		writer.writerow(field_names)
-		for obj in queryset:
-			row = writer.writerow([getattr(obj, field) for field in field_names])
-
-		return response
-
-	export_as_csv.short_description = _("Export Selected")
-	actions = ("export_as_csv",)
-
-
-class TelegramUserAdmin(CustomModelAdmin):
 	def __init__(self, model, admin_site) -> None:
 		if apps.is_installed("rangefilter"):
 			from rangefilter.filters import DateRangeFilter
 
 			self.list_filter = (
 				"is_active",
-				("date_joined", DateRangeFilter),
+				("date_added", DateRangeFilter),
 				("teledeeplink", CustomRelatedOnlyDropdownFilter),
 			)
 		super().__init__(model, admin_site)
 
-	list_display = ("id", "first_name", "last_name", "telegram_username")
+	list_display = (
+		"telegram_account_id",
+		"first_name",
+		"last_name",
+		"telegram_username",
+	)
 	search_fields = (
 		"first_name__startswith",
 		"last_name__startswith",
 		"username__startswith",
-		"id",
+		"telegram_account_id",
 	)
 	list_filter = (
-		"is_active",
-		"date_joined",
+		"is_blocked",
+		"date_added",
 		("teledeeplink", CustomRelatedOnlyDropdownFilter),
 	)
 
 
 @admin.register(ActionLog)
-class ActionLogAdmin(CustomModelAdmin):
+class ActionLogAdmin(ExportActionModelAdmin):
+	resource_class = ActionLogResource
+
 	def __init__(self, model, admin_site) -> None:
 		if apps.is_installed("rangefilter"):
 			from rangefilter.filters import DateRangeFilter
@@ -78,29 +76,32 @@ class ActionLogAdmin(CustomModelAdmin):
 			self.list_filter = (
 				"type",
 				("dttm", DateRangeFilter),
-				("user", CustomRelatedOnlyDropdownFilter),
+				("telegram_account", CustomRelatedOnlyDropdownFilter),
 			)
 		super().__init__(model, admin_site)
 
-	list_display = ("id", "user", "dttm", "type")
+	list_display = ("id", "telegram_account", "dttm", "type")
+	list_select_related = ("telegram_account",)
 	search_fields = ("type__startswith",)
 	list_filter = (
 		"type",
 		"dttm",
-		("user", CustomRelatedOnlyDropdownFilter),
+		("telegram_account", CustomRelatedOnlyDropdownFilter),
 	)
-	raw_id_fields = ("user",)
+	raw_id_fields = ("telegram_account",)
 
 
 @admin.register(TeleDeepLink)
-class TeleDeepLinkAdmin(CustomModelAdmin):
+class TeleDeepLinkAdmin(ExportActionModelAdmin):
+	resource_class = TeleDeepLinkResource
 	list_display = ("id", "title", "price", "link", "count_users")
 	search_fields = ("title", "link")
 
 	def get_queryset(self, request):
 		qs = super(TeleDeepLinkAdmin, self).get_queryset(request)
-		return qs.annotate(c_users=Count("users"))
+		return qs.annotate(c_users=Count("telegram_accounts"))
 
+	@admin.display(description=_("User count"))
 	def count_users(self, inst):
 		return inst.c_users
 
@@ -120,7 +121,8 @@ class BotMenuElemAdminForm(DefaultOverrideAdminWidgetsForm):
 
 
 @admin.register(BotMenuElem)
-class BotMenuElemAdmin(CustomModelAdmin):
+class BotMenuElemAdmin(ImportExportActionModelAdmin):
+	resource_class = BotMenuElemResource
 	list_display = ("id", "message", "is_visable", "callbacks_db")
 	search_fields = (
 		"command",
@@ -133,7 +135,8 @@ class BotMenuElemAdmin(CustomModelAdmin):
 
 
 @admin.register(BotMenuElemAttrText)
-class BotMenuElemAttrTextAdmin(CustomModelAdmin):
+class BotMenuElemAttrTextAdmin(ImportExportActionModelAdmin):
+	resource_class = BotMenuElemAttrTextResource
 	list_display = (
 		"id",
 		"dttm_added",
@@ -152,13 +155,17 @@ class TriggerAdminForm(DefaultOverrideAdminWidgetsForm):
 
 
 @admin.register(Trigger)
-class TriggerAdmin(CustomModelAdmin):
-	list_display = ("id", "name", "min_duration", "priority", "botmenuelem_id")
+class TriggerAdmin(ImportExportActionModelAdmin):
+	resource_class = TriggerResource
+	list_display = ("id", "name", "min_duration", "priority", "botmenuelem")
+	list_select_related = ("botmenuelem",)
 	search_fields = ("name", "condition_db")
 	form = TriggerAdminForm
 
 
 @admin.register(UserTrigger)
-class UserTriggerAdmin(CustomModelAdmin):
-	list_display = ("id", "dttm_added", "trigger_id", "user_id", "is_sent")
+class UserTriggerAdmin(ExportActionModelAdmin):
+	resource_class = UserTriggerResource
+	list_display = ("id", "dttm_added", "trigger", "telegram_account", "is_sent")
+	list_select_related = ("trigger", "telegram_account")
 	list_filter = ("trigger", "is_sent")

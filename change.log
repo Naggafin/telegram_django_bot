@@ -3,5 +3,7 @@ Model for Telegram accounts has now been separated from the primary user model a
 Updated models to use conventional best practices with JSONField and indexes (involved the creation of a JSON encoder class)
 Added two permission classes for requiring authenticated and admin-only requests
 Added enum for log types
-Type-labeled function/method inputs for clarity
+Type-labeled some function/method inputs for clarity
 Corrected some locale texts
+Altered the way new user sign-ups work
+Changed admin classes to utilize django-import-export for exporting/importing data (also created ModelResource classes for this purpose)
