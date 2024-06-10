@@ -176,14 +176,14 @@ def handler_decor(log_type: int = LogType.function, update_user_info: bool = Tru
 				else:
 					log_value = func.__name__
 
-				add_log_action(user.id, log_value[:32])
+				add_log_action(tg_user.pk, log_value[:32])
 
 			if not ActionLog.objects.filter(
 				user=user,
 				type="ACTION_ACTIVE_TODAY",
 				dttm__date=timezone.now().date(),
 			).exists():
-				add_log_action(user.id, "ACTION_ACTIVE_TODAY")
+				add_log_action(tg_user.pk, "ACTION_ACTIVE_TODAY")
 
 			if raise_error:
 				raise raise_error

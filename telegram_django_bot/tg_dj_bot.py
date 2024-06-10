@@ -1,10 +1,13 @@
 import logging
 import sys
 import time
+from typing import Callable
 
 from django.conf import django_settings  # LANGUAGES, USE_I18N
+from django.contrib.auth.models import AbstractUser
 from django.utils import translation
 from telegram import (
+	Bot,
 	InputMediaAnimation,
 	InputMediaAudio,
 	InputMediaDocument,
@@ -27,12 +30,12 @@ class TG_DJ_Bot(BotDJ):
 	"""
 
 	def edit_or_send(
-		bot,
-		update,
-		mess,
+		bot: Bot,
+		update: Update,
+		mess: Message,
 		buttons=None,
-		only_send=False,
-		decorate_buttons=True,
+		only_send: bool = False,
+		decorate_buttons: bool = True,
 		**kwargs,
 	):
 		if decorate_buttons and buttons:
@@ -54,7 +57,9 @@ class TG_DJ_Bot(BotDJ):
 		)
 		return res_mess
 
-	def send_botmenuelem(bot, update, user, menu_elem):
+	def send_botmenuelem(
+		bot: Bot, update: Update, user: AbstractUser, menu_elem: BotMenuElem | None
+	):
 		if menu_elem is None:
 			menu_elem = BotMenuElem.objects.filter(
 				empty_block=True, is_visable=True
@@ -122,13 +127,13 @@ class TG_DJ_Bot(BotDJ):
 		return response
 
 	def send_format_message(
-		bot,
+		bot: Bot,
 		message_format: str = MESSAGE_FORMAT.TEXT,
 		text: str = None,
 		media_files_list: list = None,
 		update: Update = None,
 		chat_id: int = None,
-		only_send=False,
+		only_send: bool = False,
 		**telegram_message_kwargs,
 	):
 		"""
@@ -305,7 +310,9 @@ class TG_DJ_Bot(BotDJ):
 
 		return response, media_files_codes
 
-	def task_send_message_handler(bot, user, func, func_args, func_kwargs):
+	def task_send_message_handler(
+		bot: Bot, user: AbstractUser, func: Callable, func_args, func_kwargs
+	):
 		is_sent = False
 		res_mess = None
 		try:

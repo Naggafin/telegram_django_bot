@@ -1,18 +1,27 @@
-class BasePermissionClass:
-	def has_permissions(self, bot, update, user, utrl_args, **kwargs):
-		raise NotImplementedError()
+import telegram
+from .views import TelegramView
+
+from django.contrib.auth.models import AbstractUser
 
 
-class PermissionAllowAny(BasePermissionClass):
-	def has_permissions(self, bot, update, user, utrl_args, **kwargs):
+class BasePermission:
+	def has_permissions(self, user: AbstractUser, view: TelegramView):
+		return True
+	
+	def has_object_permission(self, user: AbstractUser, view: TelegramView, obj):
 		return True
 
 
-class PermissionIsAuthenticated(BasePermissionClass):
-	def has_permissions(self, bot, update, user, utrl_args, **kwargs):
+class AllowAny(BasePermission):
+	def has_permissions(self, user: AbstractUser, view: TelegramView):
+		return True
+
+
+class IsAuthenticated(BasePermission):
+	def has_permissions(self, user: AbstractUser, view: TelegramView):
 		return bool(user)
 
 
-class PermissionIsAdminUser(BasePermissionClass):
-	def has_permissions(self, bot, update, user, utrl_args, **kwargs):
+class IsAdminUser(BasePermission):
+	def has_permissions(self, user: AbstractUser, view: TelegramView):
 		return bool(user and user.is_staff)

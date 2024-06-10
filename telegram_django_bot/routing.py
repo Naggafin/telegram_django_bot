@@ -3,6 +3,7 @@ import logging
 
 import telegram
 from django.conf import settings
+from django.contrib.auth.models import AbstractUser
 from django.urls import Resolver404, resolve, reverse
 
 from .models import BotMenuElem, TelegramAccount
@@ -47,7 +48,9 @@ def telegram_reverse(
 
 
 @handler_decor(log_type=LogType.callback)
-def all_command_bme_handler(bot: telegram.Bot, update: telegram.Update, user):
+def all_command_bme_handler(
+	bot: telegram.Bot, update: telegram.Update, user: AbstractUser
+):
 	if len(update.message.text[1:]) and "start" == update.message.text[1:].split()[0]:
 		menu_elem = None
 		if len(update.message.text[1:]) > 6:  # 'start ' + something
@@ -70,7 +73,9 @@ def all_command_bme_handler(bot: telegram.Bot, update: telegram.Update, user):
 
 
 @handler_decor(log_type=LogType.callback)
-def all_callback_bme_handler(bot: telegram.Bot, update: telegram.Update, user):
+def all_callback_bme_handler(
+	bot: telegram.Bot, update: telegram.Update, user: AbstractUser
+):
 	menu_elem = BotMenuElem.objects.filter(
 		callbacks_db__contains=update.callback_query.data,
 		is_visable=True,
@@ -149,7 +154,7 @@ class RouterCallbackMessageCommandHandler(Handler):
 		update: telegram.Update,
 		dispatcher: telegram.ext.Dispatcher,
 		check_result: object,
-		context=None,
+		context: telegram.ext.CallbackContext = None,
 	):
 		# todo: add flush utrl and data if viewset utrl change or error
 

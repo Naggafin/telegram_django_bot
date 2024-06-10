@@ -8,52 +8,15 @@ from django.forms.fields import BooleanField, ChoiceField
 from django.forms.models import ModelMultipleChoiceField
 from django.utils.translation import gettext_lazy as _
 
-from .permissions import PermissionAllowAny
+from .permissions import AllowAny
 from .telegram_lib_redefinition import InlineKeyboardButtonDJ as inlinebutt
 from .utils import add_log_action
 
 
-class TelegramViewSetMetaClass(type):
-	"""Needed for inheritance information of command_routings_<func> and meta_texts_dict."""
-
-	def __new__(mcs, name, bases, attrs):
-		# Collect fields from current class.
-
-		current_fields = []
-		for key, value in list(attrs.items()):
-			if key.startswith("command_routing_") and isinstance(value, str) and value:
-				current_fields.append((key, value))
-				attrs.pop(key)
-		attrs["command_routings"] = dict(current_fields)
-		new_class = super().__new__(mcs, name, bases, attrs)
-
-		# Walk through the MRO.
-		command_routings = {}
-		show_texts_dict = {}
-		for base in reversed(new_class.__mro__):
-			# Collect command_routings from base class.
-			if hasattr(base, "command_routings"):
-				command_routings.update(base.command_routings)
-
-			if hasattr(base, "meta_texts_dict"):
-				show_texts_dict.update(base.meta_texts_dict)
-
-		new_class.command_routings = command_routings
-		new_class.show_texts_dict = show_texts_dict
-		return new_class
-
-
-class TelegramViewSet(metaclass=TelegramViewSetMetaClass):
+class TelegramViewSetMixin:
 	permission_classes = [
-		PermissionAllowAny
+		AllowAny
 	]  # in dispatch function check permission for calling action with args
-	actions = [
-		"create",
-		"change",
-		"delete",
-		"show_elem",
-		"show_list",
-	]  # actions of the class
 
 	# utrl for actions
 	command_routing_create = "cr"
@@ -77,7 +40,7 @@ class TelegramViewSet(metaclass=TelegramViewSetMetaClass):
 	foreign_filter_amount = 0
 
 	# If you want to use object lookups other than pk, set 'lookup_field'.
-	# For more complex lookup requirements override `get_object()`.
+	# For more complex lookup requirements override `get_object()`.p
 	lookup_field = "pk"
 
 	prechoice_fields_values = {}
@@ -163,7 +126,7 @@ class TelegramViewSet(metaclass=TelegramViewSetMetaClass):
 		utrl = (
 			update.callback_query.data if update.callback_query else user.current_utrl
 		)
-		utrl_args = self.get_utrl_params(re.sub(f"^{self.prefix}", "", utrl))
+		self.args = utrl_args = self.get_utrl_params(re.sub(f"^{self.prefix}", "", utrl))
 		logging.debug(f"used utrl: {utrl}")
 
 		if self.has_permissions(bot, update, user, utrl_args):
@@ -180,7 +143,7 @@ class TelegramViewSet(metaclass=TelegramViewSetMetaClass):
 
 		# log without params as there are too much variants
 		utrl_path = utrl.split(self.ARGS_SEPARATOR_SYMBOL)[0]
-		add_log_action(self.user.id, utrl_path)
+		add_log_action(self.user.telegram_account.py, utrl_path)
 		return res
 
 	def get_utrl_params(self, utrl):
@@ -321,6 +284,17 @@ class TelegramViewSet(metaclass=TelegramViewSetMetaClass):
 			self.queryset._prefetch_done = False
 		return self.queryset
 
+	def get_object(self):
+		queryset = self.get_queryset()
+
+		filter_kwargs = {self.lookup_field: self.kwargs[lookup_url_kwarg]}
+		obj = get_object_or_404(queryset, **filter_kwargs)
+
+		# May raise a permission denied
+		self.check_object_permissions(self.request, obj)
+
+		return obj
+
 	def create_or_update_helper(
 		self, field, value, func_response="create", instance=None, initial_data=None
 	):
@@ -420,13 +394,6 @@ class TelegramViewSet(metaclass=TelegramViewSetMetaClass):
 		first_next_page = (page + 1) * per_page * columns
 		page_models = list(self.get_queryset()[first_this_page:first_next_page])
 		return count_models, page_models, first_this_page, first_next_page
-
-	def get_orm_model(self, model_or_pk):
-		if issubclass(type(model_or_pk), models.Model):
-			model = model_or_pk
-		else:
-			model = self.get_queryset().filter(pk=model_or_pk).first()
-		return model
 
 	# next functions are helpers for generate view of content (text and buttons for reply message)
 	# these functions just show / generate readable content for human and do not change anything
