@@ -1,31 +1,26 @@
-import logging
-
-from asgiref.sync import iscoroutinefunction, markcoroutinefunction
 import telegram
-from django.core.exceptions import ImproperlyConfigured, PermissionDenied
-from django.http import (
-	HttpResponse,
-	HttpResponseGone,
-	HttpResponseNotAllowed,
-	HttpResponsePermanentRedirect,
-	HttpResponseRedirect,
-)
-from django.template.response import TemplateResponse
-from django.urls import reverse
+from asgiref.sync import iscoroutinefunction, markcoroutinefunction
+from django.conf import settings as django_settings
+from django.core.exceptions import ImproperlyConfigured
+from django.utils import timezone, translation
 from django.utils.decorators import classonlymethod
-from django.utils.functional import classproperty
-from .exceptions import Throttled
+from django.utils.functional import cached_property, classproperty
+
+from . import exceptions
+from .conf import settings
+from .models import BotMenuElem, TeleDeepLink
+from .utils import add_log_action, get_bot, get_user
 
 
 class TelegramView:
 	actions = {
-		"create": "cr",
-		"change": 'ch',
-		"delete": 'dl',
-		"detail": 'dt',
-		"list": 'li',
+		"cr": "create",
+		"up": "update",
+		"dl": "delete",
+		"dt": "detail",
+		"li": "list",
 	}
-	
+
 	def __init__(self, **kwargs):
 		"""
 		Constructor. Called in the URLconf; can contain helpful extra
@@ -38,10 +33,7 @@ class TelegramView:
 
 	@classproperty
 	def view_is_async(cls):
-		handlers = [
-			getattr(cls, method)
-			for method in cls.actions
-		]
+		handlers = [getattr(cls, method) for method in cls.actions]
 		if not handlers:
 			return False
 		is_async = iscoroutinefunction(handlers[0])
@@ -52,9 +44,8 @@ class TelegramView:
 		return is_async
 
 	@classonlymethod
-	def as_view(cls, actions: dict=None, **initkwargs):
+	def as_view(cls, actions: dict = None, **initkwargs):
 		"""Main entry point for a request-response process."""
-		
 		## TODO: need these?
 		# The name and description initkwargs may be explicitly overridden for
 		# certain route configurations. eg, names of extra actions.
@@ -76,10 +67,12 @@ class TelegramView:
 
 		# actions must not be empty
 		if not actions:
-			raise TypeError("The `actions` argument must be provided when "
-							"calling `.as_view()` on a ViewSet. For example "
-							"`.as_view({'detail': 'dt'})`")
-		
+			raise TypeError(
+				"The `actions` argument must be provided when "
+				"calling `.as_view()` on a ViewSet. For example "
+				"`.as_view({'detail': 'dt'})`"
+			)
+
 		for key in initkwargs:
 			if key in cls.actions:
 				raise TypeError(
@@ -93,15 +86,21 @@ class TelegramView:
 					"attributes of the class." % (cls.__name__, key)
 				)
 
-		def view(bot: telegram.Bot, update: telegram.Update, user: AbstractUser, *args, **kwargs):
+		def view(
+			route: str,
+			update: telegram.Update,
+			context: telegram.ext.CallbackContext,
+			*args,
+			**kwargs,
+		):
 			self = cls(**initkwargs)
-			self.setup(bot, update, user, actions, *args, **kwargs)
+			self.setup(route, actions, update, context, *args, **kwargs)
 			if not hasattr(self, "request"):
 				raise AttributeError(
 					"%s instance has no 'request' attribute. Did you override "
 					"setup() and forget to call super()?" % cls.__name__
 				)
-			return self.dispatch(bot, update, user, *args, **kwargs)
+			return self.dispatch(route, update, context, *args, **kwargs)
 
 		view.view_class = cls
 		view.view_initkwargs = initkwargs
@@ -122,52 +121,95 @@ class TelegramView:
 
 		return view
 
-	def setup(self, bot: telegram.Bot, update: telegram.Update, user: AbstractUser, actions: dict, *args, **kwargs):
+	@cached_property
+	def user(self):
+		return get_user(self.update)
+
+	@cached_property
+	def bot(self):
+		return get_bot(self.context)
+
+	def get_action(self, route) -> str:
+		return route.split("/")[0]
+
+	def setup(
+		self,
+		route: str,
+		actions: dict,
+		update: telegram.Update,
+		context: telegram.ext.CallbackContext,
+		*args,
+		**kwargs,
+	):
 		"""Initialize attributes shared by all view methods."""
+		if update.effective_user is None:
+			raise ValueError(f"Update has no effective user: {update}")
 		self.action_map = actions
 		for method, action in actions.items():
 			handler = getattr(self, action)
 			setattr(self, method, handler)
-		self.bot = bot
+		self.action = self.get_action(route).lower()
+		self.context = context
 		self.update = update
-		self.user = user
 		self.args = args
 		self.kwargs = kwargs
 
-	def dispatch(self, bot: telegram.Bot, update: telegram.Update, user: AbstractUser, *args, **kwargs):
-		# Try to dispatch to the right method; if a method doesn't exist,
-		# defer to the error handler. Also defer to the error handler if the
-		# request method isn't on the approved list.
-		if request.method.lower() in self.http_method_names:
-			handler = getattr(
-				self, request.method.lower(), self.http_method_not_allowed
+		# activate translation
+		if django_settings.USE_I18N:
+			translation.activate(
+				getattr(self.user, "language_code", None)
+				or update.effective_user.language_code
 			)
-		else:
-			handler = self.http_method_not_allowed
-		return handler(request, *args, **kwargs)
 
-	def permission_denied(self, request, message=None, code=None):
-		"""
-		If request is not permitted, determine what kind of exception to raise.
-		"""
-		raise PermissionDenied
+	def dispatch(
+		self,
+		route: str,
+		update: telegram.Update,
+		context: telegram.ext.CallbackContext,
+		*args,
+		**kwargs,
+	):
+		try:
+			self.check_permissions(update)
+			self.check_throttles(update)
+			self.check_first_income(self.user, update)
 
-	def throttled(self, request, wait):
-		"""
-		If request is throttled, determine what kind of exception to raise.
-		"""
-		raise Throttled(wait)
+			# Get the appropriate handler method
+			if self.action in self.action_map:
+				handler = getattr(self, self.action, self.handle_action_not_allowed)
+			else:
+				handler = self.handle_action_not_allowed
+
+			response = handler(update, context, *args, **kwargs)
+
+		except Exception as exc:
+			response = self.handle_exception(exc)
+		finally:
+			if not self.user.is_anonymous:
+				if self.user.telegram_account.is_blocked:
+					self.user.telegram_account.is_blocked = False
+				self.user.telegram_account.last_active = timezone.now()
+				self.user.telegram_account.save()
+				if settings.LOG_REQUESTS:
+					log_value = self.__qualname__
+					add_log_action(self.user.telegram_account.pk, log_value[:64])
+
+		return response
+
+	def permission_denied(self, user, message=None):
+		"""If request is not permitted, determine what kind of exception to raise."""
+		raise exceptions.PermissionDenied
+
+	def throttled(self, user, wait):
+		"""If request is throttled, determine what kind of exception to raise."""
+		raise exceptions.Throttled(wait)
 
 	def get_permissions(self):
-		"""
-		Instantiates and returns the list of permissions that this view requires.
-		"""
+		"""Instantiates and returns the list of permissions that this view requires."""
 		return [permission() for permission in self.permission_classes]
 
 	def get_throttles(self):
-		"""
-		Instantiates and returns the list of throttles that this view uses.
-		"""
+		"""Instantiates and returns the list of throttles that this view uses."""
 		return [throttle() for throttle in self.throttle_classes]
 
 	def get_exception_handler_context(self):
@@ -176,159 +218,74 @@ class TelegramView:
 		as the `context` argument.
 		"""
 		return {
-			'view': self,
-			'args': getattr(self, 'args', ()),
-			'kwargs': getattr(self, 'kwargs', {}),
-			'bot': getattr(self, 'bot', None),
-			'update': getattr(self, 'update', None),
-			'user': getattr(self, 'user', None),
+			"view": self,
+			"args": getattr(self, "args", ()),
+			"kwargs": getattr(self, "kwargs", {}),
+			"context": getattr(self, "context", None),
+			"update": getattr(self, "update", None),
+			"user": getattr(self, "user", None),
+			"bot": getattr(self, "bot", None),
 		}
 
 	def get_exception_handler(self):
-		"""
-		Returns the exception handler that this view uses.
-		"""
-		return self.settings.EXCEPTION_HANDLER
+		"""Returns the exception handler that this view uses."""
+		return settings.EXCEPTION_HANDLER
 
-	def check_permissions(self, request):
+	def check_permissions(self, update: telegram.Update):
 		"""
 		Check if the request should be permitted.
 		Raises an appropriate exception if the request is not permitted.
 		"""
 		for permission in self.get_permissions():
-			if not permission.has_permission(user, self):
+			if not permission.has_permission(update, self):
 				self.permission_denied(
-					request,
-					message=getattr(permission, 'message', None),
-					code=getattr(permission, 'code', None)
+					self.user, message=getattr(permission, "message", None)
 				)
 
-	def check_object_permissions(self, request, obj):
+	def check_object_permissions(self, update: telegram.Update, obj):
 		"""
 		Check if the request should be permitted for a given object.
 		Raises an appropriate exception if the request is not permitted.
 		"""
 		for permission in self.get_permissions():
-			if not permission.has_object_permission(request, self, obj):
+			if not permission.has_object_permission(update, self, obj):
 				self.permission_denied(
-					request,
-					message=getattr(permission, 'message', None),
-					code=getattr(permission, 'code', None)
+					self.user,
+					message=getattr(permission, "message", None),
 				)
 
-	def check_throttles(self, request):
+	def check_throttles(self, update: telegram.Update):
 		"""
 		Check if request should be throttled.
 		Raises an appropriate exception if the request is throttled.
 		"""
 		throttle_durations = []
 		for throttle in self.get_throttles():
-			if not throttle.allow_request(request, self):
+			if not throttle.allow_request(update, self):
 				throttle_durations.append(throttle.wait())
 
 		if throttle_durations:
-			# Filter out `None` values which may happen in case of config / rate
-			# changes, see #1438
+			# Filter out `None` values which may happen in case of config / rate changes
 			durations = [
-				duration for duration in throttle_durations
-				if duration is not None
+				duration for duration in throttle_durations if duration is not None
 			]
 
 			duration = max(durations, default=None)
-			self.throttled(request, duration)
+			self.throttled(self.user, duration)
 
-	def determine_version(self, request, *args, **kwargs):
-		"""
-		If versioning is being used, then determine any API version for the
-		incoming request. Returns a two-tuple of (version, versioning_scheme)
-		"""
-		if self.versioning_class is None:
-			return (None, None)
-		scheme = self.versioning_class()
-		return (scheme.determine_version(request, *args, **kwargs), scheme)
-
-	# Dispatch methods
-
-	def initialize_request(self, request, *args, **kwargs):
-		"""
-		Returns the initial request object.
-		"""
-		parser_context = self.get_parser_context(request)
-
-		return Request(
-			request,
-			parsers=self.get_parsers(),
-			authenticators=self.get_authenticators(),
-			negotiator=self.get_content_negotiator(),
-			parser_context=parser_context
-		)
-
-	def initial(self, request, *args, **kwargs):
-		"""
-		Runs anything that needs to occur prior to calling the method handler.
-		"""
-		self.format_kwarg = self.get_format_suffix(**kwargs)
-
-		# Perform content negotiation and store the accepted info on the request
-		neg = self.perform_content_negotiation(request)
-		request.accepted_renderer, request.accepted_media_type = neg
-
-		# Determine the API version, if versioning is in use.
-		version, scheme = self.determine_version(request, *args, **kwargs)
-		request.version, request.versioning_scheme = version, scheme
-
-		# Ensure that the incoming request is permitted
-		self.perform_authentication(request)
-		self.check_permissions(request)
-		self.check_throttles(request)
-
-	def finalize_response(self, request, response, *args, **kwargs):
-		"""
-		Returns the final response object.
-		"""
-		# Make the error obvious if a proper response is not returned
-		assert isinstance(response, HttpResponseBase), (
-			'Expected a `Response`, `HttpResponse` or `HttpStreamingResponse` '
-			'to be returned from the view, but received a `%s`'
-			% type(response)
-		)
-
-		if isinstance(response, Response):
-			if not getattr(request, 'accepted_renderer', None):
-				neg = self.perform_content_negotiation(request, force=True)
-				request.accepted_renderer, request.accepted_media_type = neg
-
-			response.accepted_renderer = request.accepted_renderer
-			response.accepted_media_type = request.accepted_media_type
-			response.renderer_context = self.get_renderer_context()
-
-		# Add new vary headers to the response instead of overwriting.
-		vary_headers = self.headers.pop('Vary', None)
-		if vary_headers is not None:
-			patch_vary_headers(response, cc_delim_re.split(vary_headers))
-
-		for key, value in self.headers.items():
-			response[key] = value
-
-		return response
+	def check_first_income(self, user, update: telegram.Update):
+		if update and update.message and update.message.text:
+			query_words = update.message.text.split()
+			if len(query_words) > 1 and query_words[0] == "/start":
+				telelink, _ = TeleDeepLink.objects.get_or_create(link=query_words[1])
+				telelink.telegram_accounts.add(user.telegram_account)
 
 	def handle_exception(self, exc):
 		"""
 		Handle any exception that occurs, by returning an appropriate response,
 		or re-raising the error.
 		"""
-		if isinstance(exc, (exceptions.NotAuthenticated,
-							exceptions.AuthenticationFailed)):
-			# WWW-Authenticate header for 401 responses, else coerce to 403
-			auth_header = self.get_authenticate_header(self.request)
-
-			if auth_header:
-				exc.auth_header = auth_header
-			else:
-				exc.status_code = status.HTTP_403_FORBIDDEN
-
 		exception_handler = self.get_exception_handler()
-
 		context = self.get_exception_handler_context()
 		response = exception_handler(exc, context)
 
@@ -339,50 +296,41 @@ class TelegramView:
 		return response
 
 	def raise_uncaught_exception(self, exc):
-		if settings.DEBUG:
-			request = self.request
-			renderer_format = getattr(request.accepted_renderer, 'format')
-			use_plaintext_traceback = renderer_format not in ('html', 'api', 'admin')
-			request.force_plaintext_errors(use_plaintext_traceback)
 		raise exc
 
-	# Note: Views are made CSRF exempt from within `as_view` as to prevent
-	# accidental removal of this exemption in cases where `dispatch` needs to
-	# be overridden.
-	def dispatch(self, request, *args, **kwargs):
-		"""
-		`.dispatch()` is pretty much the same as Django's regular dispatch,
-		but with extra hooks for startup, finalize, and exception handling.
-		"""
-		self.args = args
-		self.kwargs = kwargs
-		request = self.initialize_request(request, *args, **kwargs)
-		self.request = request
-		self.headers = self.default_response_headers  # deprecate?
+	def handle_action_not_allowed(self):
+		raise exceptions.ActionNotAllowed
 
-		try:
-			self.initial(request, *args, **kwargs)
 
-			# Get the appropriate handler method
-			if request.method.lower() in self.http_method_names:
-				handler = getattr(self, request.method.lower(),
-								  self.http_method_not_allowed)
-			else:
-				handler = self.http_method_not_allowed
+def all_command_bme_handler(
+	route: str, update: telegram.Update, context: telegram.ext.CallbackContext
+):
+	if len(update.message.text[1:]) and "start" == update.message.text[1:].split()[0]:
+		menu_elem = None
+		if len(update.message.text[1:]) > 6:  # 'start ' + something
+			menu_elem = BotMenuElem.objects.filter(
+				command__contains=update.message.text[1:], is_visable=True
+			).first()
 
-			response = handler(request, *args, **kwargs)
+		if menu_elem is None:
+			menu_elem = BotMenuElem.objects.filter(
+				command="start", is_visable=True
+			).first()
+	else:
+		menu_elem = BotMenuElem.objects.filter(
+			command=update.message.text[1:], is_visable=True
+		).first()
+	user = get_user(update)
+	bot = get_bot(context)
+	return bot.send_botmenuelem(update, user, menu_elem)
 
-		except Exception as exc:
-			response = self.handle_exception(exc)
 
-		self.response = self.finalize_response(request, response, *args, **kwargs)
-		return self.response
-
-	def options(self, request, *args, **kwargs):
-		"""
-		Handler method for HTTP 'OPTIONS' request.
-		"""
-		if self.metadata_class is None:
-			return self.http_method_not_allowed(request, *args, **kwargs)
-		data = self.metadata_class().determine_metadata(request, self)
-		return Response(data, status=status.HTTP_200_OK)
+def all_callback_bme_handler(
+	route: str, update: telegram.Update, context: telegram.ext.CallbackContext
+):
+	menu_elem = BotMenuElem.objects.filter(
+		callbacks_db__contains=update.callback_query.data, is_visable=True
+	).first()
+	user = get_user(update)
+	bot = get_bot(context)
+	return bot.send_botmenuelem(update, user, menu_elem)

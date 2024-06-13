@@ -126,7 +126,9 @@ class TelegramViewSetMixin:
 		utrl = (
 			update.callback_query.data if update.callback_query else user.current_utrl
 		)
-		self.args = utrl_args = self.get_utrl_params(re.sub(f"^{self.prefix}", "", utrl))
+		self.args = utrl_args = self.get_utrl_params(
+			re.sub(f"^{self.prefix}", "", utrl)
+		)
 		logging.debug(f"used utrl: {utrl}")
 
 		if self.has_permissions(bot, update, user, utrl_args):

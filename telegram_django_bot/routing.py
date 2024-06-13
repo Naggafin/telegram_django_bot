@@ -1,14 +1,10 @@
-import inspect
 import logging
 
 import telegram
-from django.conf import settings
-from django.contrib.auth.models import AbstractUser
 from django.urls import Resolver404, resolve, reverse
 
-from .models import BotMenuElem, TelegramAccount
-from .td_viewset import TelegramViewSet
-from .utils import LogType, handler_decor
+from .conf import settings
+from .models import TelegramAccount
 
 try:
 	# version 20.x +
@@ -26,7 +22,7 @@ def telegram_resolve(path, utrl_conf=None):
 		path = path.split("?")[0]
 
 	if utrl_conf is None:
-		utrl_conf = settings.TELEGRAM_ROOT_UTRLCONF
+		utrl_conf = settings.ROOT_UTRLCONF
 
 	try:
 		resolver_match = resolve(path, utrl_conf)
@@ -39,48 +35,12 @@ def telegram_reverse(
 	viewname, utrl_conf=None, args=None, kwargs=None, current_app=None
 ):
 	if utrl_conf is None:
-		utrl_conf = settings.TELEGRAM_ROOT_UTRLCONF
+		utrl_conf = settings.ROOT_UTRLCONF
 
 	response = reverse(viewname, utrl_conf, args, kwargs, current_app)
 	if response[0] == "/":
 		response = response[1:]
 	return response
-
-
-@handler_decor(log_type=LogType.callback)
-def all_command_bme_handler(
-	bot: telegram.Bot, update: telegram.Update, user: AbstractUser
-):
-	if len(update.message.text[1:]) and "start" == update.message.text[1:].split()[0]:
-		menu_elem = None
-		if len(update.message.text[1:]) > 6:  # 'start ' + something
-			menu_elem = BotMenuElem.objects.filter(
-				command__contains=update.message.text[1:],
-				is_visable=True,
-			).first()
-
-		if menu_elem is None:
-			menu_elem = BotMenuElem.objects.filter(
-				command="start",
-				is_visable=True,
-			).first()
-	else:
-		menu_elem = BotMenuElem.objects.filter(
-			command=update.message.text[1:],
-			is_visable=True,
-		).first()
-	return bot.send_botmenuelem(update, user, menu_elem)
-
-
-@handler_decor(log_type=LogType.callback)
-def all_callback_bme_handler(
-	bot: telegram.Bot, update: telegram.Update, user: AbstractUser
-):
-	menu_elem = BotMenuElem.objects.filter(
-		callbacks_db__contains=update.callback_query.data,
-		is_visable=True,
-	).first()
-	return bot.send_botmenuelem(update, user, menu_elem)
 
 
 class RouterCallbackMessageCommandHandler(Handler):
@@ -91,7 +51,7 @@ class RouterCallbackMessageCommandHandler(Handler):
 		self.utrl_conf = utrl_conf
 		self.only_utrl = only_utrl  # without BME elems
 
-	def get_callback_utrl(self, update: telegram.Update):
+	def resolve(self, update: telegram.Update):
 		resolver_match = None
 		# check if utrls
 		if update.callback_query:
@@ -111,7 +71,7 @@ class RouterCallbackMessageCommandHandler(Handler):
 				user_details = update.effective_user
 
 				tg_user = (
-					TelegramAccount.objects.filter(id=user_details.id)
+					TelegramAccount.objects.filter(telegram_id=user_details.id)
 					.only("current_utrl")
 					.first()
 				)
@@ -133,8 +93,8 @@ class RouterCallbackMessageCommandHandler(Handler):
 		if isinstance(update, telegram.Update) and (
 			update.effective_message or update.callback_query
 		):
-			callback = self.get_callback_utrl(update)
-			if callback:
+			resolver_match = self.resolve(update)
+			if resolver_match:
 				return True
 			elif not self.only_utrl:
 				if (
@@ -158,27 +118,22 @@ class RouterCallbackMessageCommandHandler(Handler):
 	):
 		# todo: add flush utrl and data if viewset utrl change or error
 
-		resolver_match = self.get_callback_utrl(update)
+		resolver_match = self.resolve(update)
 
 		if resolver_match is not None:
-			if inspect.isclass(resolver_match.func) and issubclass(
-				resolver_match.func, TelegramViewSet
-			):
-				viewset = resolver_match.func(resolver_match.route)
-
-				decorating = handler_decor(log_type=LogType.no_log)
-
-				callback_func = decorating(viewset.dispatch)
-
-			else:
-				callback_func = resolver_match.func
+			route = resolver_match.route.replace("^", "").replace("$", "")
+			callback_func, args, kwargs = resolver_match
 
 		# check if in BME (we do not need check only_utrl here, as there was a check in self.check_update)
-		if callback_func is None:
+		else:
+			route = ""
 			if update.callback_query:
-				callback_func = all_callback_bme_handler
+				callback_func, args, kwargs = (all_callback_bme_handler, [], {})
 			else:
-				callback_func = all_command_bme_handler
+				callback_func, args, kwargs = (all_command_bme_handler, [], {})
 
 		self.collect_additional_context(context, update, dispatcher, check_result)
-		return callback_func(update, context)
+
+		# TODO: execute any middlewares
+
+		return callback_func(route, update, context, *args, **kwargs)

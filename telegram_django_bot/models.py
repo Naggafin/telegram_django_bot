@@ -9,6 +9,7 @@ from django.core import validators
 from django.core.serializers.json import DjangoJSONEncoder
 from django.db import models
 from django.utils import timezone
+from django.utils.functional import cached_property
 from django.utils.translation import gettext_lazy as _
 from telegram import InlineKeyboardButton  # no lazy text so standart possible to use
 
@@ -114,6 +115,7 @@ class TelegramAccount(models.Model):
 	)
 
 	date_added = models.DateField(auto_now_add=True)
+	last_active = models.DateTimeField(editable=False, null=True)
 
 	seed_code = models.IntegerField(default=_seed_code, editable=False)
 	telegram_id = models.BigIntegerField(primary_key=True, editable=False)
@@ -195,18 +197,16 @@ class TeleDeepLink(models.Model):
 class ActionLog(models.Model):
 	"""User actions logs."""
 
-	dttm = models.DateTimeField(auto_now_add=True)
-	type = models.CharField(max_length=64)
-	telegram_account = models.ForeignKey(
-		TelegramAccount,
-		related_name="action_logs",
-		on_delete=models.SET_NULL,
-		null=True,
-		blank=True,
-	)
+	dttm = models.DateTimeField(auto_now_add=True, editable=False)
+	type = models.CharField(max_length=64, editable=False)
+	telegram_id = models.BigIntegerField(null=True, blank=True, editable=False)
+
+	@cached_property
+	def telegram_account(self) -> TelegramAccount | None:
+		return TelegramAccount.objects.filter(telegram_id=self.telegram_id).first()
 
 	def __str__(self):
-		return "AL({}, {}, {})".format(self.user_id, self.dttm, self.type)
+		return "AL({}, {}, {})".format(self.telegram_id, self.dttm, self.type)
 
 	class Meta:
 		indexes = [models.Index(fields=["dttm"])]

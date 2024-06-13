@@ -4,15 +4,14 @@ from calendar import monthcalendar
 from functools import wraps
 
 import telegram
-from allauth.utils import generate_unique_username
 from dateutil.relativedelta import relativedelta
 from django.conf import settings as django_settings  # LANGUAGES, USE_I18N
-from django.contrib.auth import get_user_model
+from django.contrib.auth.models import AnonymousUser
 from django.utils import timezone, translation
 from django.utils.translation import gettext_lazy as _
 
 from .conf import settings
-from .models import ActionLog, TeleDeepLink, TelegramAccount
+from .models import ActionLog, TelegramAccount
 from .telegram_lib_redefinition import InlineKeyboardButtonDJ as inlinebutt
 
 ERROR_MESSAGE = _(
@@ -32,6 +31,23 @@ def add_log_action(user_id: int, action: str):
 		ActionLog.objects.create(type=action, telegram_account_id=user_id)
 
 
+def get_user(update: telegram.Update):
+	try:
+		tg_user = TelegramAccount.objects.select_related("user").get(
+			telegram_id=update.effective_user.id
+		)
+		if tg_user.telegram_language_code != update.effective_user.language_code:
+			tg_user.telegram_language_code = update.effective_user.language_code
+			tg_user.save()
+		return tg_user.user
+	except TelegramAccount.DoesNotExist:
+		return AnonymousUser()
+
+
+def get_bot(context: telegram.ext.CallbackContext) -> telegram.Bot:
+	return context.bot
+
+
 def handler_decor(log_type: int = LogType.function, update_user_info: bool = True):
 	"""
 
@@ -45,105 +61,15 @@ def handler_decor(log_type: int = LogType.function, update_user_info: bool = Tru
 		def wrapper(
 			update: telegram.Update, callback_context: telegram.ext.CallbackContext
 		):
-			def check_first_income(tg_user: TelegramAccount):
-				if update and update.message and update.message.text:
-					query_words = update.message.text.split()
-					if len(query_words) > 1 and query_words[0] == "/start":
-						telelink, _ = TeleDeepLink.objects.get_or_create(
-							link=query_words[1]
-						)
-						telelink.telegram_accounts.add(tg_user)
-
 			bot = callback_context.bot
-
 			user_details = update.effective_user
-			# if update.callback_query:
-			#     user_details = update.callback_query.from_user
-			# elif update.inline_query:
-			#     user_details = update.inline_query.from_user
-			# else:
-			#     user_details = update.message.from_user
-
-			if user_details is None:
-				raise ValueError(
-					f"handler_decor is made for communication with user, current update has not any user: {update}"
-				)
-
-			# new user
-			# todo: this whole process ought to use django-allauth for telegram signup/login
-			if not (
-				tg_user := TelegramAccount.objects.filter(id=user_details.id)
-				.select_related("user")
-				.first()
-			):
-				User = get_user_model()
-
-				username = user_details.username.replace("@", "").strip()
-
-				if username:
-					lookup_kwargs = (
-						{"username_iexact": username}
-						if settings.CASE_INSENSITIVE_USERNAME_LOOKUP
-						else {"username": username}
-					)
-					user, created = User.objects.get_or_create(**lookup_kwargs)
-				elif settings.REQUIRE_USERNAME:
-					raise ValueError(
-						_(
-							"A username is required. Please add a username your Telegram account."
-						)
-					)
-				else:
-					texts = [username, user_details.first_name, user_details.last_name]
-					user, created = (
-						User.objects.create(username=generate_unique_username(texts)),
-						True,
-					)
-
-				if created:
-					user_adding_info = {
-						"telegram_language_code": user_details.language_code,
-						"telegram_username": user_details.username[:64]
-						if user_details.username
-						else "",
-						"first_name": user_details.first_name[:30]
-						if user_details.first_name
-						else "",
-						"last_name": user_details.last_name[:60]
-						if user_details.last_name
-						else "",
-					}
-					tg_user = TelegramAccount(user=user, **user_adding_info)
-					tg_user.full_clean()
-					tg_user.save()
-
-					add_log_action(tg_user.pk, "ACTION_CREATED")
-					check_first_income(tg_user)
-
-			# existing user
-			elif update_user_info:
-				user = tg_user.user
-				# check if telegram_username or first_name or last_name changed
-				fields_changed = False
-				for key in ("telegram_username", "first_name", "last_name"):
-					if getattr(tg_user, key) != user_adding_info[key]:
-						setattr(tg_user, key, user_adding_info[key])
-						fields_changed = True
-
-				if fields_changed:
-					tg_user.save()
-
-			if tg_user.is_blocked:
-				check_first_income(tg_user)
-				tg_user.is_blocked = False
-				tg_user.save()
 
 			if django_settings.USE_I18N:
-				translation.activate(tg_user.language_code)
+				translation.activate(user_details.language_code)
 
 			raise_error = None
 			try:
-				res = func(bot, update, user)
+				res = func(bot, update)
 			except telegram.error.BadRequest as error:
 				if "Message is not modified:" in error.message:
 					res = None
