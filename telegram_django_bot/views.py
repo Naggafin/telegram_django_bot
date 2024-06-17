@@ -1,7 +1,9 @@
 import telegram
 from asgiref.sync import iscoroutinefunction, markcoroutinefunction
 from django.conf import settings as django_settings
-from django.core.exceptions import ImproperlyConfigured
+from django.core.exceptions import ImproperlyConfigured, PermissionDenied
+from django.db import connections
+from django.http import Http404
 from django.utils import timezone, translation
 from django.utils.decorators import classonlymethod
 from django.utils.functional import cached_property, classproperty
@@ -12,14 +14,36 @@ from .models import BotMenuElem, TeleDeepLink
 from .utils import add_log_action, get_bot, get_user
 
 
+def set_rollback():
+	for db in connections.all():
+		if db.settings_dict["ATOMIC_REQUESTS"] and db.in_atomic_block:
+			db.set_rollback(True)
+
+
+def exception_handler(exc, context):
+	if isinstance(exc, Http404):
+		exc = exceptions.NotFound(*(exc.args))
+	elif isinstance(exc, PermissionDenied):
+		exc = exceptions.PermissionDenied(*(exc.args))
+
+	if isinstance(exc, exceptions.TelegramBotException):
+		set_rollback()
+		return Response(str(exc))
+
+	return None
+
+
 class TelegramView:
-	actions = {
-		"cr": "create",
-		"up": "update",
-		"dl": "delete",
-		"dt": "detail",
-		"li": "list",
-	}
+	throttle_classes = settings.DEFAULT_THROTTLE_CLASSES
+	permission_classes = settings.DEFAULT_PERMISSION_CLASSES
+
+	action_names = [
+		"create",
+		"update",
+		"delete",
+		"detail",
+		"list",
+	]
 
 	def __init__(self, **kwargs):
 		"""
@@ -33,7 +57,7 @@ class TelegramView:
 
 	@classproperty
 	def view_is_async(cls):
-		handlers = [getattr(cls, method) for method in cls.actions]
+		handlers = [getattr(cls, method) for method in cls.action_names]
 		if not handlers:
 			return False
 		is_async = iscoroutinefunction(handlers[0])
@@ -44,39 +68,12 @@ class TelegramView:
 		return is_async
 
 	@classonlymethod
-	def as_view(cls, actions: dict = None, **initkwargs):
+	def as_view(cls, **initkwargs):
 		"""Main entry point for a request-response process."""
-		## TODO: need these?
-		# The name and description initkwargs may be explicitly overridden for
-		# certain route configurations. eg, names of extra actions.
-		cls.name = None
-		cls.description = None
-
-		# The suffix initkwarg is reserved for displaying the viewset type.
-		# This initkwarg should have no effect if the name is provided.
-		# eg. 'List' or 'Instance'.
-		cls.suffix = None
-
-		# The detail initkwarg is reserved for introspecting the viewset type.
-		cls.detail = None
-
-		# Setting a basename allows a view to reverse its action urls. This
-		# value is provided by the router through the initkwargs.
-		cls.basename = None
-		##
-
-		# actions must not be empty
-		if not actions:
-			raise TypeError(
-				"The `actions` argument must be provided when "
-				"calling `.as_view()` on a ViewSet. For example "
-				"`.as_view({'detail': 'dt'})`"
-			)
-
 		for key in initkwargs:
-			if key in cls.actions:
+			if key in cls.action_names:
 				raise TypeError(
-					"The method name %s is not accepted as a keyword argument "
+					"The action name %s is not accepted as a keyword argument "
 					"to %s()." % (key, cls.__name__)
 				)
 			if not hasattr(cls, key):
@@ -87,20 +84,20 @@ class TelegramView:
 				)
 
 		def view(
-			route: str,
+			utrl: str,
 			update: telegram.Update,
 			context: telegram.ext.CallbackContext,
 			*args,
 			**kwargs,
 		):
 			self = cls(**initkwargs)
-			self.setup(route, actions, update, context, *args, **kwargs)
-			if not hasattr(self, "request"):
+			self.setup(utrl, update, context, *args, **kwargs)
+			if not hasattr(self, "update"):
 				raise AttributeError(
-					"%s instance has no 'request' attribute. Did you override "
+					"%s instance has no 'update' attribute. Did you override "
 					"setup() and forget to call super()?" % cls.__name__
 				)
-			return self.dispatch(route, update, context, *args, **kwargs)
+			return self.dispatch(utrl, update, context, *args, **kwargs)
 
 		view.view_class = cls
 		view.view_initkwargs = initkwargs
@@ -121,6 +118,10 @@ class TelegramView:
 
 		return view
 
+	@property
+	def allowed_actions(self):
+		return [a.upper() for a in self.action_names if hasattr(self, a)]
+
 	@cached_property
 	def user(self):
 		return get_user(self.update)
@@ -129,13 +130,12 @@ class TelegramView:
 	def bot(self):
 		return get_bot(self.context)
 
-	def get_action(self, route) -> str:
-		return route.split("/")[0]
+	def get_action(self, utrl) -> str:
+		return utrl.split("/")[0]
 
 	def setup(
 		self,
-		route: str,
-		actions: dict,
+		utrl: str,
 		update: telegram.Update,
 		context: telegram.ext.CallbackContext,
 		*args,
@@ -144,11 +144,9 @@ class TelegramView:
 		"""Initialize attributes shared by all view methods."""
 		if update.effective_user is None:
 			raise ValueError(f"Update has no effective user: {update}")
-		self.action_map = actions
-		for method, action in actions.items():
-			handler = getattr(self, action)
-			setattr(self, method, handler)
-		self.action = self.get_action(route).lower()
+
+		self.utrl = utrl
+		self.action = self.get_action(utrl)
 		self.context = context
 		self.update = update
 		self.args = args
@@ -161,29 +159,41 @@ class TelegramView:
 				or update.effective_user.language_code
 			)
 
+	def send_answer(
+		self, chat_reply_action, chat_action_args, *args, **kwargs
+	) -> telegram.Message:
+		if chat_reply_action != self.CHAT_ACTION_MESSAGE:
+			raise ValueError(
+				f"unknown chat_action {chat_reply_action} {self.utrl}, {self.user}"
+			)
+		return self.bot.edit_or_send(self.update, *chat_action_args)
+
 	def dispatch(
 		self,
-		route: str,
+		utrl: str,
 		update: telegram.Update,
 		context: telegram.ext.CallbackContext,
 		*args,
 		**kwargs,
-	):
+	) -> telegram.Message:
 		try:
 			self.check_permissions(update)
 			self.check_throttles(update)
 			self.check_first_income(self.user, update)
 
 			# Get the appropriate handler method
-			if self.action in self.action_map:
+			if self.action in self.action_names:
 				handler = getattr(self, self.action, self.handle_action_not_allowed)
 			else:
 				handler = self.handle_action_not_allowed
 
-			response = handler(update, context, *args, **kwargs)
+			chat_reply_action, chat_action_args = handler(
+				update, context, *args, **kwargs
+			)
 
 		except Exception as exc:
-			response = self.handle_exception(exc)
+			chat_reply_action, chat_action_args = self.handle_exception(exc)
+
 		finally:
 			if not self.user.is_anonymous:
 				if self.user.telegram_account.is_blocked:
@@ -191,10 +201,9 @@ class TelegramView:
 				self.user.telegram_account.last_active = timezone.now()
 				self.user.telegram_account.save()
 				if settings.LOG_REQUESTS:
-					log_value = self.__qualname__
-					add_log_action(self.user.telegram_account.pk, log_value[:64])
+					add_log_action(self.user.telegram_account.pk, self.utrl[:64])
 
-		return response
+		return self.send_answer(chat_reply_action, chat_action_args)
 
 	def permission_denied(self, user, message=None):
 		"""If request is not permitted, determine what kind of exception to raise."""
@@ -303,7 +312,7 @@ class TelegramView:
 
 
 def all_command_bme_handler(
-	route: str, update: telegram.Update, context: telegram.ext.CallbackContext
+	utrl: str, update: telegram.Update, context: telegram.ext.CallbackContext
 ):
 	if len(update.message.text[1:]) and "start" == update.message.text[1:].split()[0]:
 		menu_elem = None
@@ -326,7 +335,7 @@ def all_command_bme_handler(
 
 
 def all_callback_bme_handler(
-	route: str, update: telegram.Update, context: telegram.ext.CallbackContext
+	utrl: str, update: telegram.Update, context: telegram.ext.CallbackContext
 ):
 	menu_elem = BotMenuElem.objects.filter(
 		callbacks_db__contains=update.callback_query.data, is_visable=True

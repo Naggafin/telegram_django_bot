@@ -16,6 +16,10 @@ class PermissionDenied(TelegramBotException):
 	default_detail = _("You do not have permission to perform this action.")
 
 
+class NotFound(APIException):
+	default_detail = _("Not found.")
+
+
 class Throttled(TelegramBotException):
 	default_detail = _("Request was throttled.")
 	extra_detail_singular = _("Expected available in {wait} second.")

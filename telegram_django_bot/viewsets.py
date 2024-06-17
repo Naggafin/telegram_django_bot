@@ -11,6 +11,153 @@ from django.utils.translation import gettext_lazy as _
 from .permissions import AllowAny
 from .telegram_lib_redefinition import InlineKeyboardButtonDJ as inlinebutt
 from .utils import add_log_action
+from .views import TelegramView
+
+
+class TelegramViewSetMixin(TelegramView):
+	@classonlymethod
+	def as_view(cls, actions: dict = None, **initkwargs):
+		"""Main entry point for a request-response process."""
+		## TODO: need these?
+		# The name and description initkwargs may be explicitly overridden for
+		# certain route configurations. eg, names of extra actions.
+		cls.name = None
+		cls.description = None
+
+		# The suffix initkwarg is reserved for displaying the viewset type.
+		# This initkwarg should have no effect if the name is provided.
+		# eg. 'List' or 'Instance'.
+		cls.suffix = None
+
+		# The detail initkwarg is reserved for introspecting the viewset type.
+		cls.detail = None
+
+		# Setting a basename allows a view to reverse its action urls. This
+		# value is provided by the router through the initkwargs.
+		cls.basename = None
+		##
+
+		# actions must not be empty
+		if not actions:
+			raise TypeError(
+				"The `actions` argument must be provided when "
+				"calling `.as_view()` on a ViewSet. For example "
+				"`.as_view({'detail': 'dt'})`"
+			)
+
+		for key in initkwargs:
+			if key in cls.action_names:
+				raise TypeError(
+					"The method name %s is not accepted as a keyword argument "
+					"to %s()." % (key, cls.__name__)
+				)
+			if not hasattr(cls, key):
+				raise TypeError(
+					"%s() received an invalid keyword %r. as_view "
+					"only accepts arguments that are already "
+					"attributes of the class." % (cls.__name__, key)
+				)
+
+		def view(
+			utrl: str,
+			update: telegram.Update,
+			context: telegram.ext.CallbackContext,
+			*args,
+			**kwargs,
+		):
+			self = cls(**initkwargs)
+			self.setup(actions, utrl, update, context, *args, **kwargs)
+			if not hasattr(self, "request"):
+				raise AttributeError(
+					"%s instance has no 'request' attribute. Did you override "
+					"setup() and forget to call super()?" % cls.__name__
+				)
+			return self.dispatch(utrl, update, context, *args, **kwargs)
+
+		view.view_class = cls
+		view.view_initkwargs = initkwargs
+
+		# __name__ and __qualname__ are intentionally left unchanged as
+		# view_class should be used to robustly determine the name of the view
+		# instead.
+		view.__doc__ = cls.__doc__
+		view.__module__ = cls.__module__
+		view.__annotations__ = cls.dispatch.__annotations__
+		# Copy possible attributes set by decorators, e.g. @csrf_exempt, from
+		# the dispatch method.
+		view.__dict__.update(cls.dispatch.__dict__)
+
+		# Mark the callback if the view class is async.
+		if cls.view_is_async:
+			markcoroutinefunction(view)
+
+		return view
+
+	def setup(self, actions: dict, *args, **kwargs):
+		"""Initialize attributes shared by all view methods."""
+		self.action_map = actions
+		for method, action in actions.items():
+			handler = getattr(self, action)
+			setattr(self, method, handler)
+		super().setup(*args, **kwargs)
+
+	def reverse_action(self, url_name, *args, **kwargs):
+		"""
+		Reverse the action for the given `url_name`.
+		"""
+		url_name = "%s-%s" % (self.basename, url_name)
+		namespace = None
+		if self.request and self.request.resolver_match:
+			namespace = self.request.resolver_match.namespace
+		if namespace:
+			url_name = namespace + ":" + url_name
+		kwargs.setdefault("request", self.request)
+
+		return reverse(url_name, *args, **kwargs)
+
+	@classmethod
+	def get_extra_actions(cls):
+		"""
+		Get the methods that are marked as an extra ViewSet `@action`.
+		"""
+		return [
+			_check_attr_name(method, name)
+			for name, method in getmembers(cls, _is_extra_action)
+		]
+
+	def get_extra_action_url_map(self):
+		"""
+		Build a map of {names: urls} for the extra actions.
+
+		This method will noop if `detail` was not provided as a view initkwarg.
+		"""
+		action_urls = {}
+
+		# exit early if `detail` has not been provided
+		if self.detail is None:
+			return action_urls
+
+		# filter for the relevant extra actions
+		actions = [
+			action
+			for action in self.get_extra_actions()
+			if action.detail == self.detail
+		]
+
+		for action in actions:
+			try:
+				url_name = "%s-%s" % (self.basename, action.url_name)
+				namespace = self.request.resolver_match.namespace
+				if namespace:
+					url_name = "%s:%s" % (namespace, url_name)
+
+				url = reverse(url_name, self.args, self.kwargs, request=self.request)
+				view = self.__class__(**action.kwargs)
+				action_urls[view.get_view_name()] = url
+			except NoReverseMatch:
+				pass  # URL requires additional arguments, ignore
+
+		return action_urls
 
 
 class TelegramViewSetMixin:
