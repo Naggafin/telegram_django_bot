@@ -172,14 +172,6 @@ class TelegramViewSetMixin:
 	command_routing_show_elem = "se"
 	command_routing_show_list = "sl"
 
-	WRITE_MESSAGE_VARIANT_SYMBOLS = "!WMVS!"
-	NONE_VARIANT_SYMBOLS = "!NoneNULL!"
-	GO_NEXT_MULTICHOICE_SYMBOLS = "!GNMS!"
-
-	CHAT_ACTION_MESSAGE = "message"
-
-	ARGS_SEPARATOR_SYMBOL = "&"
-
 	model_form = None
 
 	queryset = None

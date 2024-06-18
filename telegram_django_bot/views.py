@@ -10,6 +10,7 @@ from django.utils.functional import cached_property, classproperty
 
 from . import exceptions
 from .conf import settings
+from .constants import ChatActions
 from .models import BotMenuElem, TeleDeepLink
 from .utils import add_log_action, get_bot, get_user
 
@@ -28,7 +29,9 @@ def exception_handler(exc, context):
 
 	if isinstance(exc, exceptions.TelegramBotException):
 		set_rollback()
-		return Response(str(exc))
+		chat_reply_action = ChatActions.message
+		chat_action_args = (str(exc), [])
+		return (chat_reply_action, chat_action_args)
 
 	return None
 
@@ -39,10 +42,10 @@ class TelegramView:
 
 	action_names = [
 		"create",
-		"update",
-		"delete",
-		"detail",
 		"list",
+		"retrieve",
+		"update",
+		"destroy",
 	]
 
 	def __init__(self, **kwargs):

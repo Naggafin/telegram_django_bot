@@ -449,3 +449,11 @@ class UserTrigger(TelegramAbstractActiveModel):
 	telegram_account = models.ForeignKey(TelegramAccount, on_delete=models.PROTECT)
 
 	is_sent = models.BooleanField(default=False)
+
+
+class Persistence(models.Model):
+	user_data = models.JSONField(default=dict, editable=False)
+	chat_data = models.JSONField(default=dict, editable=False)
+	bot_data = models.JSONField(default=dict, editable=False)
+	callback_data = models.JSONField(default=list, editable=False)
+	conversations = models.JSONField(default=dict, editable=False)
