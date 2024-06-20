@@ -44,9 +44,9 @@ class DatabasePersistence(BasePersistence):
 			self.chat_data = defaultdict(self.context_types.chat_data, data.chat_data)
 			self.bot_data = data.bot_data or self.context_types.bot_data()
 			self.callback_data = data.callback_data
-			self.callback_data[0] = tuple(
-				self.callback_data[0]
-			)  # for telegram.ext.types.CDCData compatibility
+			# for telegram.ext.types.CDCData compatibility
+			if self.callback_data:
+				self.callback_data[0] = tuple(self.callback_data[0])
 		except DatabaseError:
 			self.instance = None
 			self.conversations = {}
@@ -63,10 +63,15 @@ class DatabasePersistence(BasePersistence):
 		self.instance.user_data = self.user_data
 		self.instance.chat_data = self.chat_data
 		self.instance.bot_data = self.bot_data
-		self.instance.callback_data = [
-			list(self.callback_data[0]),
-			self.callback_data[1],
-		]
+		# for json encoder compatibility
+		self.instance.callback_data = (
+			[
+				list(self.callback_data[0]),
+				self.callback_data[1],
+			]
+			if self.callback_data
+			else []
+		)
 		self.instance.save(update_fields=update_fields)
 
 	def get_user_data(self) -> dict:

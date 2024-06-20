@@ -1,45 +1,13 @@
 import datetime
-import json
 import random
 import zoneinfo
 
-import dateutil
 from django.conf import settings as django_settings
 from django.core import validators
-from django.core.serializers.json import DjangoJSONEncoder
 from django.db import models
 from django.utils import timezone
-from django.utils.functional import cached_property
 from django.utils.translation import gettext_lazy as _
 from telegram import InlineKeyboardButton  # no lazy text so standart possible to use
-
-
-class TelegramDjangoJSONDecoder(json.JSONDecoder):
-	def __init__(self, *args, **kwargs):
-		super(TelegramDjangoJSONDecoder, self).__init__(
-			*args, object_hook=self.object_hook_decoder, **kwargs
-		)
-
-	def object_hook_decoder(self, sub_dict, *args, **kwargs):
-		# so it works only for dictionary data (if datetime is in list it will not be worked)
-		for key, value in sub_dict.items():
-			if isinstance(value, str):
-				try:
-					sub_dict[key] = dateutil.parser.isoparse(value)
-				except ValueError:
-					pass
-
-		return sub_dict
-
-
-class TelegramDjangoJSONEncoder(DjangoJSONEncoder):
-	def default(self, o):
-		if isinstance(o, models.Model):
-			return o.pk
-		elif hasattr(o, "__iter__") and any(isinstance(obj, models.Model) for obj in o):
-			return [obj.pk if isinstance(obj, models.Model) else obj for obj in o]
-		else:
-			return super().default(o)
 
 
 class MESSAGE_FORMAT:
@@ -98,6 +66,10 @@ def _seed_code():
 	return random.randint(0, 100)
 
 
+def _default_language_code():
+	return django_settings.LANGUAGE_CODE
+
+
 def _default_timezone():
 	if not django_settings.USE_TZ:
 		return datetime.timedelta()
@@ -114,67 +86,38 @@ class TelegramAccount(models.Model):
 		editable=False,
 	)
 
-	date_added = models.DateField(auto_now_add=True)
-	last_active = models.DateTimeField(editable=False, null=True)
+	date_joined = models.DateField(_("date joined"), auto_now_add=True)
+	last_active = models.DateTimeField(_("last active"), editable=False, null=True)
 
-	seed_code = models.IntegerField(default=_seed_code, editable=False)
-	telegram_id = models.BigIntegerField(primary_key=True, editable=False)
-	telegram_username = models.CharField(
-		max_length=64, null=True, blank=True, editable=False
+	seed_code = models.IntegerField(_("seed code"), default=_seed_code, editable=False)
+	telegram_id = models.PositiveBigIntegerField(
+		_("telegram ID"), primary_key=True, editable=False
 	)
-	telegram_language_code = models.CharField(
-		max_length=16, default=django_settings.LANGUAGE_CODE
+	username = models.CharField(_("username"), max_length=64, editable=False, null=True)
+	first_name = models.CharField(_("first name"), max_length=64, editable=False)
+	last_name = models.CharField(
+		_("last named"), max_length=64, editable=False, null=True
 	)
+	language_code = models.CharField(
+		_("language code"), max_length=8, default=_default_language_code, editable=False
+	)
+	timezone = models.DurationField(_("timezone"), default=_default_timezone)
 
-	timezone = models.DurationField(default=_default_timezone)
-
-	# todo: add verify comparison current_utrl and current_utrl_context/current_utrl_form
-	current_utrl = models.CharField(max_length=64, blank=True)
-	current_utrl_code_dttm = models.DateTimeField(null=True, blank=True)
-	current_utrl_context = models.JSONField(
-		default=dict,
-		encoder=TelegramDjangoJSONEncoder,
-		decoder=TelegramDjangoJSONDecoder,
-		blank=True,
-	)
-	# form structure {'form_name': '', 'form_data': {}}
-	current_utrl_form = models.JSONField(
-		default=dict,
-		encoder=TelegramDjangoJSONEncoder,
-		decoder=TelegramDjangoJSONDecoder,
-		blank=True,
-	)
-
-	is_blocked = models.BooleanField(default=False)
+	is_blocked_bot = models.BooleanField(_("is blocked bot?"), default=False)
+	is_admin = models.BooleanField(_("is admin?"), default=False)
 
 	def __str__(self):
 		return self.telegram_username if self.telegram_username else f"#{self.pk}"
 
 	def __repr__(self):
-		return f"TelegramAccount({self.pk}, {self.telegram_username or '-'}, {self.first_name or '-'})"
+		return f"TelegramAccount({self.pk}, {self.telegram_username or '-'}, {self.first_name or '-'} {self.last_name or '-'})"
 
 	@property
 	def id(self):
 		return self.telegram_id
 
-	def clear_status(self, commit=True):
-		self.current_utrl = ""
-		self.current_utrl_code_dttm = None
-		self.current_utrl_context = {}
-		self.current_utrl_form = {}
-		if commit:
-			self.save()
 
-	@property
-	def language_code(self):
-		if self.telegram_language_code in map(
-			lambda x: x[0], django_settings.LANGUAGES
-		):
-			return self.telegram_language_code
-		return django_settings.LANGUAGE_CODE
-
-
-class TeleDeepLink(models.Model):
+class TelegramDeepLink(models.Model):
 	title = models.CharField(max_length=64, blank=True)
 	price = models.DecimalField(null=True, blank=True)
 	link = models.CharField(
@@ -192,24 +135,6 @@ class TeleDeepLink(models.Model):
 
 	def __str__(self):
 		return f"TDL({self.id}, {self.link})"
-
-
-class ActionLog(models.Model):
-	"""User actions logs."""
-
-	dttm = models.DateTimeField(auto_now_add=True, editable=False)
-	type = models.CharField(max_length=64, editable=False)
-	telegram_id = models.BigIntegerField(null=True, blank=True, editable=False)
-
-	@cached_property
-	def telegram_account(self) -> TelegramAccount | None:
-		return TelegramAccount.objects.filter(telegram_id=self.telegram_id).first()
-
-	def __str__(self):
-		return "AL({}, {}, {})".format(self.telegram_id, self.dttm, self.type)
-
-	class Meta:
-		indexes = [models.Index(fields=["dttm"])]
 
 
 class BotMenuElem(models.Model):

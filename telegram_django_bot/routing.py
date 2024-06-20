@@ -5,6 +5,7 @@ from django.urls import Resolver404, resolve, reverse
 
 from .conf import settings
 from .models import TelegramAccount
+from .views import all_callback_bme_handler, all_command_bme_handler
 
 try:
 	# version 20.x +

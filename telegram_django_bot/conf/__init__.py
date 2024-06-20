@@ -32,6 +32,19 @@ DEFAULTS = {
 	"NON_FIELD_ERRORS_KEY": "non_field_errors",
 }
 
+
+# List of settings that may be in string import notation.
+IMPORT_STRINGS = [
+	"DEFAULT_PERMISSION_CLASSES",
+	"DEFAULT_THROTTLE_CLASSES",
+	"DEFAULT_PAGINATION_CLASS",
+	"DEFAULT_FILTER_BACKENDS",
+	"EXCEPTION_HANDLER",
+	"VIEW_NAME_FUNCTION",
+	"VIEW_DESCRIPTION_FUNCTION",
+]
+
+
 # List of settings that have been removed
 REMOVED_SETTINGS = []
 
@@ -51,9 +64,7 @@ def perform_import(val, setting_name):
 
 
 def import_from_string(val, setting_name):
-	"""
-	Attempt to import a class from a string representation.
-	"""
+	"""Attempt to import a class from a string representation."""
 	try:
 		return import_string(val)
 	except ImportError as e:

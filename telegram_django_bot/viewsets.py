@@ -1,48 +1,61 @@
 import copy
+import itertools
 import logging
 import re
+from inspect import getmembers
 
+import telegram
+from asgiref.sync import markcoroutinefunction
+from django.conf import settings as django_settings
 from django.db import models
 from django.forms import HiddenInput
 from django.forms.fields import BooleanField, ChoiceField
 from django.forms.models import ModelMultipleChoiceField
+from django.urls import NoReverseMatch
+from django.utils import timezone, translation
+from django.utils.decorators import classonlymethod
 from django.utils.translation import gettext_lazy as _
+from rest_framework.viewsets import _check_attr_name
 
+from . import exceptions
+from .conf import settings
+from .decorators import MethodMapper
 from .permissions import AllowAny
 from .telegram_lib_redefinition import InlineKeyboardButtonDJ as inlinebutt
 from .utils import add_log_action
+from .utrls import reverse
 from .views import TelegramView
+
+logger = logging.getLogger(__name__)
+
+
+def _is_extra_action(attr):
+	return hasattr(attr, "mapping") and isinstance(attr.mapping, MethodMapper)
 
 
 class TelegramViewSetMixin(TelegramView):
+	default_action_names = (
+		"list",
+		"create",
+		"retrieve",
+		"update",
+		"destroy",
+	)
+
 	@classonlymethod
-	def as_view(cls, actions: dict = None, **initkwargs):
+	def as_view(cls, action: str = None, **initkwargs):
 		"""Main entry point for a request-response process."""
-		## TODO: need these?
-		# The name and description initkwargs may be explicitly overridden for
-		# certain route configurations. eg, names of extra actions.
 		cls.name = None
 		cls.description = None
-
-		# The suffix initkwarg is reserved for displaying the viewset type.
-		# This initkwarg should have no effect if the name is provided.
-		# eg. 'List' or 'Instance'.
 		cls.suffix = None
-
-		# The detail initkwarg is reserved for introspecting the viewset type.
 		cls.detail = None
-
-		# Setting a basename allows a view to reverse its action urls. This
-		# value is provided by the router through the initkwargs.
 		cls.basename = None
-		##
 
-		# actions must not be empty
-		if not actions:
+		if not action:
 			raise TypeError(
-				"The `actions` argument must be provided when "
+				"The `action` argument must be provided when "
 				"calling `.as_view()` on a ViewSet. For example "
-				"`.as_view({'detail': 'dt'})`"
+				"`.as_view('create')`"
 			)
 
 		for key in initkwargs:
@@ -59,20 +72,33 @@ class TelegramViewSetMixin(TelegramView):
 				)
 
 		def view(
-			utrl: str,
 			update: telegram.Update,
 			context: telegram.ext.CallbackContext,
 			*args,
 			**kwargs,
 		):
 			self = cls(**initkwargs)
-			self.setup(actions, utrl, update, context, *args, **kwargs)
-			if not hasattr(self, "request"):
+			self.setup(action, update, context, *args, **kwargs)
+			if not hasattr(self, "update"):
 				raise AttributeError(
-					"%s instance has no 'request' attribute. Did you override "
+					"%s instance has no 'update' attribute. Did you override "
 					"setup() and forget to call super()?" % cls.__name__
 				)
-			return self.dispatch(utrl, update, context, *args, **kwargs)
+			if django_settings.USE_I18N:
+				language_code = update.effective_user.language_code or (
+					self.user.telegram_account.language_code
+					if not self.user.is_anonymous
+					else None
+				)
+				if language_code not in [lang[0] for lang in django_settings.LANGUAGES]:
+					logger.warning(
+						f"{repr(self)}: language code doesn't match any code defined in settings, using default language"
+					)
+					language_code = django_settings.LANGUAGE_CODE
+				with translation.override(language_code):
+					return self.dispatch(update, context, *args, **kwargs)
+			else:
+				return self.dispatch(update, context, *args, **kwargs)
 
 		view.view_class = cls
 		view.view_initkwargs = initkwargs
@@ -93,49 +119,76 @@ class TelegramViewSetMixin(TelegramView):
 
 		return view
 
-	def setup(self, actions: dict, *args, **kwargs):
-		"""Initialize attributes shared by all view methods."""
-		self.action_map = actions
-		for method, action in actions.items():
-			handler = getattr(self, action)
-			setattr(self, method, handler)
+	@property
+	def allowed_actions(self):
+		return [
+			a.lower()
+			for a in itertools.chain(
+				self.default_action_names, type(self).get_extra_actions()
+			)
+			if hasattr(self, a)
+		]
+
+	def setup(self, action: str, *args, **kwargs):
 		super().setup(*args, **kwargs)
+		self.action = action.lower()
 
-	def reverse_action(self, url_name, *args, **kwargs):
-		"""
-		Reverse the action for the given `url_name`.
-		"""
-		url_name = "%s-%s" % (self.basename, url_name)
-		namespace = None
-		if self.request and self.request.resolver_match:
-			namespace = self.request.resolver_match.namespace
-		if namespace:
-			url_name = namespace + ":" + url_name
-		kwargs.setdefault("request", self.request)
+	def dispatch(
+		self,
+		update: telegram.Update,
+		context: telegram.ext.CallbackContext,
+		*args,
+		**kwargs,
+	) -> telegram.Message:
+		try:
+			self.check_permissions(update)
+			self.check_throttles(update)
+			self.check_first_income(self.user, update)
 
-		return reverse(url_name, *args, **kwargs)
+			# Get the appropriate handler method
+			if self.action in self.allowed_actions:
+				handler = getattr(self, self.action, self.handle_action_not_allowed)
+			else:
+				handler = self.handle_action_not_allowed
+
+			chat_reply_action, chat_action_args = handler(
+				update, context, *args, **kwargs
+			)
+
+		except Exception as exc:
+			chat_reply_action, chat_action_args = self.handle_exception(exc)
+
+		finally:
+			if not self.user.is_anonymous:
+				if self.user.telegram_account.is_blocked_bot:
+					self.user.telegram_account.is_blocked_bot = False
+				self.user.telegram_account.language_code = (
+					update.effective_user.language_code
+				)
+				self.user.telegram_account.last_active = timezone.now()
+				self.user.telegram_account.save()
+				if settings.LOG_REQUESTS:
+					add_log_action(self.user.telegram_account.pk, self.utrl[:64])
+
+		return self.send_answer(chat_reply_action, chat_action_args)
+
+	def reverse_action(self, action_name, *args, **kwargs):
+		utrl_name = "%s-%s" % (self.basename, action_name)
+		return reverse(utrl_name, *args, **kwargs)
 
 	@classmethod
 	def get_extra_actions(cls):
-		"""
-		Get the methods that are marked as an extra ViewSet `@action`.
-		"""
 		return [
 			_check_attr_name(method, name)
 			for name, method in getmembers(cls, _is_extra_action)
 		]
 
-	def get_extra_action_url_map(self):
-		"""
-		Build a map of {names: urls} for the extra actions.
-
-		This method will noop if `detail` was not provided as a view initkwarg.
-		"""
-		action_urls = {}
+	def get_extra_action_utrl_map(self):
+		action_utrls = {}
 
 		# exit early if `detail` has not been provided
 		if self.detail is None:
-			return action_urls
+			return action_utrls
 
 		# filter for the relevant extra actions
 		actions = [
@@ -146,18 +199,21 @@ class TelegramViewSetMixin(TelegramView):
 
 		for action in actions:
 			try:
-				url_name = "%s-%s" % (self.basename, action.url_name)
-				namespace = self.request.resolver_match.namespace
+				utrl_name = "%s-%s" % (self.basename, action.utrl_name)
+				namespace = self.request.resolver_match.namespace  # TODO
 				if namespace:
-					url_name = "%s:%s" % (namespace, url_name)
+					utrl_name = "%s:%s" % (namespace, utrl_name)
 
-				url = reverse(url_name, self.args, self.kwargs, request=self.request)
+				utrl = reverse(utrl_name, self.args, self.kwargs, request=self.request)
 				view = self.__class__(**action.kwargs)
-				action_urls[view.get_view_name()] = url
+				action_utrls[view.get_view_name()] = utrl
 			except NoReverseMatch:
-				pass  # URL requires additional arguments, ignore
+				pass  # UTRL requires additional arguments, ignore
 
-		return action_urls
+		return action_utrls
+
+	def handle_action_not_allowed(self):
+		raise exceptions.ActionNotAllowed
 
 
 class TelegramViewSetMixin:

@@ -1,17 +1,16 @@
-import enum
 import sys
 from calendar import monthcalendar
 from functools import wraps
 
 import telegram
 from dateutil.relativedelta import relativedelta
-from django.conf import settings as django_settings  # LANGUAGES, USE_I18N
-from django.contrib.auth.models import AnonymousUser
+from django.conf import settings as django_settings
+from django.contrib.auth.models import AbstractUser, AnonymousUser
+from django.contrin.auth import get_user_model
 from django.utils import timezone, translation
 from django.utils.translation import gettext_lazy as _
 
-from .conf import settings
-from .models import ActionLog, TelegramAccount
+from .models import ActionLog
 from .telegram_lib_redefinition import InlineKeyboardButtonDJ as inlinebutt
 
 ERROR_MESSAGE = _(
@@ -19,28 +18,15 @@ ERROR_MESSAGE = _(
 )
 
 
-class LogType(enum.Enum):
-	function = "F"
-	callback = "C"
-	user_status = "U"
-	no_log = "N"
-
-
-def add_log_action(user_id: int, action: str):
-	if settings.LOGGING_TELEGRAM_ACTIONS:
-		ActionLog.objects.create(type=action, telegram_account_id=user_id)
-
-
-def get_user(update: telegram.Update):
+def get_user(update: telegram.Update) -> AbstractUser | AnonymousUser:
+	User = get_user_model()
 	try:
-		tg_user = TelegramAccount.objects.select_related("user").get(
-			telegram_id=update.effective_user.id
+		return (
+			User.objects.filter(telegram_account_id=update.effective_user.id)
+			.select_related("telegram_account")
+			.get()
 		)
-		if tg_user.telegram_language_code != update.effective_user.language_code:
-			tg_user.telegram_language_code = update.effective_user.language_code
-			tg_user.save()
-		return tg_user.user
-	except TelegramAccount.DoesNotExist:
+	except User.DoesNotExist:
 		return AnonymousUser()
 
 

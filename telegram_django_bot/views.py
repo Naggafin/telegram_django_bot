@@ -1,3 +1,5 @@
+import logging
+
 import telegram
 from asgiref.sync import iscoroutinefunction, markcoroutinefunction
 from django.conf import settings as django_settings
@@ -13,6 +15,8 @@ from .conf import settings
 from .constants import ChatActions
 from .models import BotMenuElem, TeleDeepLink
 from .utils import add_log_action, get_bot, get_user
+
+logger = logging.getLogger(__name__)
 
 
 def set_rollback():
@@ -39,14 +43,6 @@ def exception_handler(exc, context):
 class TelegramView:
 	throttle_classes = settings.DEFAULT_THROTTLE_CLASSES
 	permission_classes = settings.DEFAULT_PERMISSION_CLASSES
-
-	action_names = [
-		"create",
-		"list",
-		"retrieve",
-		"update",
-		"destroy",
-	]
 
 	def __init__(self, **kwargs):
 		"""
@@ -87,20 +83,58 @@ class TelegramView:
 				)
 
 		def view(
-			utrl: str,
 			update: telegram.Update,
 			context: telegram.ext.CallbackContext,
 			*args,
 			**kwargs,
 		):
 			self = cls(**initkwargs)
-			self.setup(utrl, update, context, *args, **kwargs)
+			self.setup(update, context, *args, **kwargs)
 			if not hasattr(self, "update"):
 				raise AttributeError(
 					"%s instance has no 'update' attribute. Did you override "
 					"setup() and forget to call super()?" % cls.__name__
 				)
-			return self.dispatch(utrl, update, context, *args, **kwargs)
+
+			try:
+				if django_settings.USE_I18N:
+					language_code = update.effective_user.language_code or (
+						self.user.telegram_account.language_code
+						if not self.user.is_anonymous
+						else None
+					)
+					if language_code not in [
+						lang[0] for lang in django_settings.LANGUAGES
+					]:
+						logger.warning(
+							f"{repr(self)}: language code doesn't match any code defined in settings, using default language"
+						)
+						language_code = django_settings.LANGUAGE_CODE
+					with translation.override(language_code):
+						chat_reply_action, chat_action_args = self.handler(
+							update, context, *args, **kwargs
+						)
+				else:
+					chat_reply_action, chat_action_args = self.handler(
+						update, context, *args, **kwargs
+					)
+
+			except Exception as exc:
+				chat_reply_action, chat_action_args = self.handle_exception(exc)
+
+			finally:
+				if not self.user.is_anonymous:
+					if self.user.telegram_account.is_blocked_bot:
+						self.user.telegram_account.is_blocked_bot = False
+					self.user.telegram_account.language_code = (
+						update.effective_user.language_code
+					)
+					self.user.telegram_account.last_active = timezone.now()
+					self.user.telegram_account.save()
+					if settings.LOG_REQUESTS:
+						add_log_action(self.user.telegram_account.pk, self.utrl[:64])
+
+			return self.send_answer(chat_reply_action, chat_action_args)
 
 		view.view_class = cls
 		view.view_initkwargs = initkwargs
@@ -121,10 +155,6 @@ class TelegramView:
 
 		return view
 
-	@property
-	def allowed_actions(self):
-		return [a.upper() for a in self.action_names if hasattr(self, a)]
-
 	@cached_property
 	def user(self):
 		return get_user(self.update)
@@ -133,34 +163,20 @@ class TelegramView:
 	def bot(self):
 		return get_bot(self.context)
 
-	def get_action(self, utrl) -> str:
-		return utrl.split("/")[0]
-
 	def setup(
 		self,
-		utrl: str,
+		action: str,
 		update: telegram.Update,
 		context: telegram.ext.CallbackContext,
 		*args,
 		**kwargs,
 	):
-		"""Initialize attributes shared by all view methods."""
 		if update.effective_user is None:
 			raise ValueError(f"Update has no effective user: {update}")
-
-		self.utrl = utrl
-		self.action = self.get_action(utrl)
 		self.context = context
 		self.update = update
 		self.args = args
 		self.kwargs = kwargs
-
-		# activate translation
-		if django_settings.USE_I18N:
-			translation.activate(
-				getattr(self.user, "language_code", None)
-				or update.effective_user.language_code
-			)
 
 	def send_answer(
 		self, chat_reply_action, chat_action_args, *args, **kwargs
@@ -171,42 +187,14 @@ class TelegramView:
 			)
 		return self.bot.edit_or_send(self.update, *chat_action_args)
 
-	def dispatch(
+	def handler(
 		self,
-		utrl: str,
 		update: telegram.Update,
 		context: telegram.ext.CallbackContext,
 		*args,
 		**kwargs,
 	) -> telegram.Message:
-		try:
-			self.check_permissions(update)
-			self.check_throttles(update)
-			self.check_first_income(self.user, update)
-
-			# Get the appropriate handler method
-			if self.action in self.action_names:
-				handler = getattr(self, self.action, self.handle_action_not_allowed)
-			else:
-				handler = self.handle_action_not_allowed
-
-			chat_reply_action, chat_action_args = handler(
-				update, context, *args, **kwargs
-			)
-
-		except Exception as exc:
-			chat_reply_action, chat_action_args = self.handle_exception(exc)
-
-		finally:
-			if not self.user.is_anonymous:
-				if self.user.telegram_account.is_blocked:
-					self.user.telegram_account.is_blocked = False
-				self.user.telegram_account.last_active = timezone.now()
-				self.user.telegram_account.save()
-				if settings.LOG_REQUESTS:
-					add_log_action(self.user.telegram_account.pk, self.utrl[:64])
-
-		return self.send_answer(chat_reply_action, chat_action_args)
+		raise NotImplementedError
 
 	def permission_denied(self, user, message=None):
 		"""If request is not permitted, determine what kind of exception to raise."""
@@ -309,9 +297,6 @@ class TelegramView:
 
 	def raise_uncaught_exception(self, exc):
 		raise exc
-
-	def handle_action_not_allowed(self):
-		raise exceptions.ActionNotAllowed
 
 
 def all_command_bme_handler(
