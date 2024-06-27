@@ -4,12 +4,9 @@ import re
 
 from django.core.checks import Error, Warning
 from django.core.exceptions import ViewDoesNotExist
-from django.urls import (
-	CheckURLMixin,
-	LocaleRegexDescriptor,
-	URLPattern,
-	URLResolver,
-)
+from django.urls import URLPattern, URLResolver
+from django.urls.resolvers import CheckURLMixin, LocaleRegexDescriptor
+from django.utils.functional import cached_property
 
 from ..conf import settings
 
@@ -152,3 +149,19 @@ class TelegramResolver(URLResolver):
 				)
 				messages.append(Error(msg, id="urls.E007"))
 		return messages
+
+	@cached_property
+	def url_patterns(self):
+		# urlconf_module might be a valid set of patterns, so we default to it
+		patterns = getattr(self.urlconf_module, "utrlpatterns", self.urlconf_module)
+		try:
+			iter(patterns)
+		except TypeError as e:
+			msg = (
+				"The included UTRLconf '{name}' does not appear to have "
+				"any patterns in it. If you see the 'utrlpatterns' variable "
+				"with valid patterns in the file then the issue is probably "
+				"caused by a circular import."
+			)
+			raise ImproperlyConfigured(msg.format(name=self.urlconf_name)) from e
+		return patterns

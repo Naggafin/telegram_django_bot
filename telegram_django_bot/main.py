@@ -1,8 +1,11 @@
+import functools
 import os
+from queue import Queue
 
 import django
 from django.core.exceptions import ImproperlyConfigured
-from telegram.ext import Updater
+from telegram.ext import ExtBot, JobQueue, Updater
+from telegram.utils.request import Request
 
 try:
 	os.environ["DJANGO_SETTINGS_MODULE"]
@@ -16,22 +19,32 @@ django.setup()
 
 from telegram_django_bot.conf import settings
 from telegram_django_bot.ext.databasepersistence import DatabasePersistence
-from telegram_django_bot.routing import RouterCallbackMessageCommandHandler
-from telegram_django_bot.tg_dj_bot import TG_DJ_Bot
 
 
-def add_handlers(updater):
-	dp = updater.dispatcher
-	dp.add_handler(RouterCallbackMessageCommandHandler())
+@functools.cache
+def get_dispatcher() -> RouteDispatcher:
+	workers = 0 if settings.DEBUG else len(os.sched_getaffinity(0))
+	con_pool_size = workers + 4
+	request = Request(con_pool_size=con_pool_size)
+	bot = ExtBot(settings.TELEGRAM_TOKEN, request=request)
+	update_queue = Queue()
+	job_queue = JobQueue()
+	persistence = DatabasePersistence()
+	dispatcher = RouteDispatcher(
+		bot,
+		update_queue,
+		job_queue=job_queue,
+		workers=workers,
+		persistence=persistence,
+		utrl_conf=settings.ROOT_UTRLCONF,
+	)
+	job_queue.set_dispatcher(dispatcher)
+	return dispatcher
 
 
 def main():
-	n_workers = 0 if settings.DEBUG else len(os.sched_getaffinity(0))
-	updater = Updater(
-		bot=TG_DJ_Bot(settings.TELEGRAM_TOKEN),
-		workers=n_workers,
-		persistence=DatabasePersistence(),
-	)
+	dispatcher = get_dispatcher()
+	updater = Updater(dispatcher=dispatcher)
 	add_handlers(updater)
 	updater.start_polling()
 	updater.idle()

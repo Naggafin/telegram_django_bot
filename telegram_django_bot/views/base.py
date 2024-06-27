@@ -3,18 +3,20 @@ import logging
 import telegram
 from asgiref.sync import iscoroutinefunction, markcoroutinefunction
 from django.conf import settings as django_settings
-from django.core.exceptions import ImproperlyConfigured, PermissionDenied
+from django.core.exceptions import PermissionDenied
 from django.db import connections
 from django.http import Http404
 from django.utils import timezone, translation
 from django.utils.decorators import classonlymethod
 from django.utils.functional import cached_property, classproperty
+from telegram.ext.commandhandler import CommandHandler
+from telegram.ext.handler import Handler
 
-from . import exceptions
-from .conf import settings
-from .constants import ChatActions
-from .models import BotMenuElem, TeleDeepLink
-from .utils import add_log_action, get_bot, get_user
+from .. import exceptions
+from ..conf import settings
+from ..constants import ChatActions
+from ..models import BotMenuElem, TelegramDeepLink
+from ..utils import get_bot, get_user, log_response
 
 logger = logging.getLogger(__name__)
 
@@ -45,34 +47,26 @@ class TelegramView:
 	permission_classes = settings.DEFAULT_PERMISSION_CLASSES
 
 	def __init__(self, **kwargs):
-		"""
-		Constructor. Called in the URLconf; can contain helpful extra
-		keyword arguments, and other things.
-		"""
-		# Go through keyword arguments, and either save their values to our
-		# instance, or raise an error.
 		for key, value in kwargs.items():
 			setattr(self, key, value)
 
 	@classproperty
-	def view_is_async(cls):
-		handlers = [getattr(cls, method) for method in cls.action_names]
-		if not handlers:
-			return False
-		is_async = iscoroutinefunction(handlers[0])
-		if not all(iscoroutinefunction(h) == is_async for h in handlers[1:]):
-			raise ImproperlyConfigured(
-				f"{cls.__qualname__} handlers must either be all sync or all async."
-			)
-		return is_async
+	def callback_is_async(cls):
+		return iscoroutinefunction(cls.callback)
+
+	@classmethod
+	def get_handler_class(cls) -> Handler:
+		return CommandHandler
 
 	@classonlymethod
-	def as_view(cls, **initkwargs):
+	def as_handler(cls, handler_kwargs=None, **initkwargs):
 		"""Main entry point for a request-response process."""
+		handler_kwargs = handler_kwargs or {}
+
 		for key in initkwargs:
-			if key in cls.action_names:
+			if key == "callback":
 				raise TypeError(
-					"The action name %s is not accepted as a keyword argument "
+					"The method name %s is not accepted as a keyword argument "
 					"to %s()." % (key, cls.__name__)
 				)
 			if not hasattr(cls, key):
@@ -82,7 +76,7 @@ class TelegramView:
 					"attributes of the class." % (cls.__name__, key)
 				)
 
-		def view(
+		def callback(
 			update: telegram.Update,
 			context: telegram.ext.CallbackContext,
 			*args,
@@ -132,28 +126,31 @@ class TelegramView:
 					self.user.telegram_account.last_active = timezone.now()
 					self.user.telegram_account.save()
 					if settings.LOG_REQUESTS:
-						add_log_action(self.user.telegram_account.pk, self.utrl[:64])
+						log_response(update)
 
 			return self.send_answer(chat_reply_action, chat_action_args)
 
-		view.view_class = cls
-		view.view_initkwargs = initkwargs
+		callback.view_class = cls
+		callback.view_initkwargs = initkwargs
+		callback.handler_kwargs = handler_kwargs
 
 		# __name__ and __qualname__ are intentionally left unchanged as
 		# view_class should be used to robustly determine the name of the view
 		# instead.
-		view.__doc__ = cls.__doc__
-		view.__module__ = cls.__module__
-		view.__annotations__ = cls.dispatch.__annotations__
+		callback.__doc__ = cls.__doc__
+		callback.__module__ = cls.__module__
+		callback.__annotations__ = cls.dispatch.__annotations__
 		# Copy possible attributes set by decorators, e.g. @csrf_exempt, from
 		# the dispatch method.
-		view.__dict__.update(cls.dispatch.__dict__)
+		callback.__dict__.update(cls.dispatch.__dict__)
 
 		# Mark the callback if the view class is async.
-		if cls.view_is_async:
-			markcoroutinefunction(view)
+		if cls.callback_is_async:
+			markcoroutinefunction(callback)
 
-		return view
+		Handler = cls.get_handler_class()
+		handler = Handler(callback=callback, **handler_kwargs)
+		return handler
 
 	@cached_property
 	def user(self):
@@ -186,15 +183,6 @@ class TelegramView:
 				f"unknown chat_action {chat_reply_action} {self.utrl}, {self.user}"
 			)
 		return self.bot.edit_or_send(self.update, *chat_action_args)
-
-	def handler(
-		self,
-		update: telegram.Update,
-		context: telegram.ext.CallbackContext,
-		*args,
-		**kwargs,
-	) -> telegram.Message:
-		raise NotImplementedError
 
 	def permission_denied(self, user, message=None):
 		"""If request is not permitted, determine what kind of exception to raise."""
@@ -277,7 +265,9 @@ class TelegramView:
 		if update and update.message and update.message.text:
 			query_words = update.message.text.split()
 			if len(query_words) > 1 and query_words[0] == "/start":
-				telelink, _ = TeleDeepLink.objects.get_or_create(link=query_words[1])
+				telelink, _ = TelegramDeepLink.objects.get_or_create(
+					link=query_words[1]
+				)
 				telelink.telegram_accounts.add(user.telegram_account)
 
 	def handle_exception(self, exc):

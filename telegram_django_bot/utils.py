@@ -314,3 +314,7 @@ class CalendarPagination:
 				)
 			month_buttons.append(week_buttons)
 		return month_buttons
+
+
+def log_response(update: telegram.Update):
+	pass  # TODO

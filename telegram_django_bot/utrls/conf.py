@@ -50,10 +50,6 @@ def include(arg, namespace=None):
 
 
 def _command(route, view, kwargs=None, name=None, Pattern=None):
-	from django.views import View
-
-	from ..views import TelegramView
-
 	if kwargs is not None and not isinstance(kwargs, dict):
 		raise TypeError(
 			f"kwargs argument must be a dict, but got {kwargs.__class__.__name__}."
@@ -72,17 +68,11 @@ def _command(route, view, kwargs=None, name=None, Pattern=None):
 	elif callable(view):
 		pattern = Pattern(route, name=name, is_endpoint=True)
 		return TelegramPattern(pattern, view, kwargs, name)
-	elif isinstance(view, View):
+	elif not callable(view):
 		view_cls_name = view.__class__.__name__
 		raise TypeError(
 			f"view must be a callable, pass {view_cls_name}.as_view(), not "
 			f"{view_cls_name}()."
-		)
-	elif not isinstance(view, TelegramView):
-		view_cls_name = view.__class__.__name__
-		raise TypeError(
-			f"view class must be a subclass of {TelegramView.__name__}, not "
-			f"{view_cls_name}."
 		)
 	else:
 		raise TypeError(

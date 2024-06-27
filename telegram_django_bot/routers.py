@@ -1,7 +1,16 @@
-from django.core.exceptions import ImproperlyConfigured
-from rest_framework.routers import DynamicRoute, Route, flatten
+import itertools
+from collections import namedtuple
 
-from .urls import path
+from django.core.exceptions import ImproperlyConfigured
+
+from .utrls import command
+
+Route = namedtuple("Route", ["utrl", "mapping", "name", "detail", "initkwargs"])
+DynamicRoute = namedtuple("DynamicRoute", ["utrl", "name", "detail", "initkwargs"])
+
+
+def flatten(list_of_lists):
+	return itertools.chain(*list_of_lists)
 
 
 class BaseRouter:
@@ -47,14 +56,14 @@ class SimpleRouter(BaseRouter):
 	routes = [
 		# List route.
 		Route(
-			url=r"^/list$",
+			utrl=r"^/list$",
 			mapping="list",
 			name="{basename}-list",
 			detail=False,
 			initkwargs={"suffix": "List"},
 		),
 		Route(
-			url=r"^/create$",
+			utrl=r"^/create$",
 			mapping="create",
 			name="{basename}-create",
 			detail=False,
@@ -63,28 +72,28 @@ class SimpleRouter(BaseRouter):
 		# Dynamically generated list routes. Generated using
 		# @action(detail=False) decorator on methods of the viewset.
 		DynamicRoute(
-			url=r"^/{command}$",
+			utrl=r"^/{command}$",
 			name="{basename}-{utrl_name}",
 			detail=False,
 			initkwargs={},
 		),
 		# Detail route.
 		Route(
-			url=r"^/retrieve$",
+			utrl=r"^/retrieve$",
 			mapping="retrieve",
 			name="{basename}-retrieve",
 			detail=True,
 			initkwargs={"suffix": "Retrieve"},
 		),
 		Route(
-			url=r"^/update$",
+			utrl=r"^/update$",
 			mapping="update",
 			name="{basename}-update",
 			detail=True,
 			initkwargs={"suffix": "Update"},
 		),
 		Route(
-			url=r"^/delete$",
+			utrl=r"^/delete$",
 			mapping="delete",
 			name="{basename}-delete",
 			detail=True,
@@ -93,7 +102,7 @@ class SimpleRouter(BaseRouter):
 		# Dynamically generated detail routes. Generated using
 		# @action(detail=True) decorator on methods of the viewset.
 		DynamicRoute(
-			url=r"^/{command}$",
+			utrl=r"^/{command}$",
 			name="{basename}-{utrl_name}",
 			detail=True,
 			initkwargs={},
@@ -101,17 +110,17 @@ class SimpleRouter(BaseRouter):
 	]
 
 	def __init__(self):
-		self._utrl_conf = path
+		self._utrl_conf = command
 		# remove regex characters from routes
 		_routes = []
 		for route in self.routes:
-			utrl_param = route.url
+			utrl_param = route.utrl
 			if utrl_param[0] == "^":
 				utrl_param = utrl_param[1:]
 			if utrl_param[-1] == "$":
 				utrl_param = utrl_param[:-1]
 
-			_routes.append(route._replace(url=utrl_param))
+			_routes.append(route._replace(utrl=utrl_param))
 		self.routes = _routes
 		super().__init__()
 
@@ -178,7 +187,7 @@ class SimpleRouter(BaseRouter):
 		for command in action.mapping:
 			routes.append(
 				Route(
-					url=route.url.replace("{command}", command),
+					utrl=route.utrl.replace("{command}", command),
 					mapping=action.__name__,
 					name=route.name.replace("{utrl_name}", action.utrl_name),
 					detail=route.detail,
@@ -200,6 +209,6 @@ class SimpleRouter(BaseRouter):
 
 				view = viewset.as_view(route.mapping, **initkwargs)
 				name = route.name.format(basename=basename)
-				ret.append(self._utrl_conf(route.url, view, name=name))
+				ret.append(self._utrl_conf(route.utrl, view, name=name))
 
 		return ret

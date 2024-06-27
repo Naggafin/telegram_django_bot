@@ -59,7 +59,7 @@ class TelegramViewSetMixin(TelegramView):
 			)
 
 		for key in initkwargs:
-			if key in cls.action_names:
+			if key == "callback":
 				raise TypeError(
 					"The method name %s is not accepted as a keyword argument "
 					"to %s()." % (key, cls.__name__)
