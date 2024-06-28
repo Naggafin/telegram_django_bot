@@ -52,45 +52,47 @@ class RouteDispatcher(Dispatcher):
 				)
 			return
 
+		# initial record of user's last request
+		user = update.effective_user
+		if user and user.id not in self._user_routes:
+			resolver = get_resolver()
+			self._user_routes[user.id] = resolver.app_name
+
+		app_name = self._user_routes[user.id]
 		context = None
 		handled = False
 		sync_modes = []
 
-		for app_name in self.handlers:
-			try:
-				for handler in self.handlers[app_name]:
-					check = handler.check_update(update)
-					if check is not None and check is not False:
-						if not context and self.use_context:
-							context = self.context_types.context.from_update(
-								update, self
-							)
-							context.refresh_data()
-						handled = True
-						sync_modes.append(handler.run_async)
-						handler.handle_update(update, self, check, context)
-						break
-
-			# Stop processing with any other handler.
-			except DispatcherHandlerStop:
-				self.logger.debug(
-					"Stopping further handlers due to DispatcherHandlerStop"
-				)
-				self.update_persistence(update=update)
-				break
-
-			# Dispatch any error.
-			except Exception as exc:
-				try:
-					self.dispatch_error(update, exc)
-				except DispatcherHandlerStop:
-					self.logger.debug("Error handler stopped further handlers")
+		try:
+			for handler in self.handlers[app_name]:
+				check = handler.check_update(update)
+				if check is not None and check is not False:
+					if not context and self.use_context:
+						context = self.context_types.context.from_update(update, self)
+						context.refresh_data()
+					handled = True
+					sync_modes.append(handler.run_async)
+					handler.handle_update(update, self, check, context)
 					break
-				# Errors should not stop the thread.
-				except Exception:
-					self.logger.exception(
-						"An uncaught error was raised while handling the error."
-					)
+
+		# Stop processing with any other handler.
+		except DispatcherHandlerStop:
+			self.logger.debug("Stopping further handlers due to DispatcherHandlerStop")
+			self.update_persistence(update=update)
+			break
+
+		# Dispatch any error.
+		except Exception as exc:
+			try:
+				self.dispatch_error(update, exc)
+			except DispatcherHandlerStop:
+				self.logger.debug("Error handler stopped further handlers")
+				break
+			# Errors should not stop the thread.
+			except Exception:
+				self.logger.exception(
+					"An uncaught error was raised while handling the error."
+				)
 
 		# Update persistence, if handled
 		handled_only_async = all(sync_modes)

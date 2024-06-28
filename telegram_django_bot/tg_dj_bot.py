@@ -325,13 +325,13 @@ class TG_DJ_Bot(BotDJ):
 
 		except error.Unauthorized as e:
 			logging.info(f"user blocked {e}, {user.telegram_account.pk}\n")
-			user.telegram_account.is_blocked = True
+			user.telegram_account.is_blocked_bot = True
 			user.telegram_account.save()
 			add_log_action(user.telegram_account.pk, "TYPE_BLOCKED")
 
 		except error.BadRequest as e:
 			if e.message == "Chat not found":
-				user.telegram_account.is_blocked = True
+				user.telegram_account.is_blocked_bot = True
 				user.telegram_account.save()
 				add_log_action(user.telegram_account.pk, "TYPE_BLOCKED")
 

@@ -9,6 +9,7 @@ from django.http import Http404
 from django.utils import timezone, translation
 from django.utils.decorators import classonlymethod
 from django.utils.functional import cached_property, classproperty
+from django.views.generic.base import ContextMixin
 from telegram.ext.commandhandler import CommandHandler
 from telegram.ext.handler import Handler
 
@@ -43,6 +44,7 @@ def exception_handler(exc, context):
 
 
 class TelegramView:
+	handler_class = CommandHandler
 	throttle_classes = settings.DEFAULT_THROTTLE_CLASSES
 	permission_classes = settings.DEFAULT_PERMISSION_CLASSES
 
@@ -53,10 +55,6 @@ class TelegramView:
 	@classproperty
 	def callback_is_async(cls):
 		return iscoroutinefunction(cls.callback)
-
-	@classmethod
-	def get_handler_class(cls) -> Handler:
-		return CommandHandler
 
 	@classonlymethod
 	def as_handler(cls, handler_kwargs=None, **initkwargs):
@@ -105,11 +103,11 @@ class TelegramView:
 						)
 						language_code = django_settings.LANGUAGE_CODE
 					with translation.override(language_code):
-						chat_reply_action, chat_action_args = self.handler(
+						chat_reply_action, chat_action_args = self.reply(
 							update, context, *args, **kwargs
 						)
 				else:
-					chat_reply_action, chat_action_args = self.handler(
+					chat_reply_action, chat_action_args = self.reply(
 						update, context, *args, **kwargs
 					)
 
@@ -148,9 +146,16 @@ class TelegramView:
 		if cls.callback_is_async:
 			markcoroutinefunction(callback)
 
-		Handler = cls.get_handler_class()
-		handler = Handler(callback=callback, **handler_kwargs)
-		return handler
+		return self.get_handler(callback, **handler_kwargs)
+
+	def get_handler_class(self) -> Handler:
+		return self.handler_class
+
+	def get_handler(self, callback, **handler_kwargs) -> Handler:
+		return self.get_handler_class()(callback, **handler_kwargs)
+
+	def reply(self, update, context, *args, **kwargs):
+		raise NotImplementedError
 
 	@cached_property
 	def user(self):
@@ -287,6 +292,21 @@ class TelegramView:
 
 	def raise_uncaught_exception(self, exc):
 		raise exc
+
+
+class TemplateResponseMixin:
+	def render_response(self, context):
+		template = self.render_template(context)
+		return self.update.message.reply_text(template)
+
+	def render_template(self, context) -> str:
+		raise NotImplementedError
+
+
+class TemplateView(TemplateResponseMixin, ContextMixin, TelegramView):
+	def reply(self, update, context, *args, **kwargs):
+		context = self.get_context_data(**kwargs)
+		return self.render_response(context)
 
 
 def all_command_bme_handler(
